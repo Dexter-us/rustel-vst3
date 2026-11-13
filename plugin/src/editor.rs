@@ -111,19 +111,24 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         mark_dirty(setter, &params);
                     }
                 });
-                let mut draft = params.draft.lock();
+                let mut draft = params.draft.lock().clone();
+                let mut changed = false;
                 egui::ScrollArea::both().show(ui, |ui| {
                     let response = ui.add(
-                        TextEdit::multiline(&mut *draft)
+                        TextEdit::multiline(&mut draft)
                             .font(FontId::monospace(15.0))
                             .code_editor()
                             .desired_width(f32::INFINITY)
                             .desired_rows(28),
                     );
                     if response.changed() {
-                        mark_dirty(setter, &params);
+                        changed = true;
                     }
                 });
+                if changed {
+                    *params.draft.lock() = draft;
+                    mark_dirty(setter, &params);
+                }
             });
         },
     )

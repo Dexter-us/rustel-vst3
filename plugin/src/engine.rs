@@ -82,6 +82,14 @@ impl Engine {
         self.shared
             .sample_rate
             .store(sample_rate.round() as u32, Ordering::Release);
+        if self
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.sample_rate == sample_rate.round() as u32)
+        {
+            self.reset();
+            return true;
+        }
         *self.shared.status.lock() = "Preparing score…".into();
         if self.worker.is_none() {
             let shared = self.shared.clone();
