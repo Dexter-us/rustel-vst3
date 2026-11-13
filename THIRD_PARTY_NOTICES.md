@@ -22,6 +22,17 @@ The framework's license is also included in `licenses/NIH-PLUG-LICENSE`.
 
 The pinned framework's VST3 bindings and transitive dependencies have their own licenses, including GPL-3.0 licensing in the VST3 bindings. This plugin is distributed under AGPL-3.0-or-later; do not assume the resulting binary is an ISC-only or closed-source product.
 
+## Baseview
+
+- Project: https://github.com/RustAudio/baseview
+- Revision: `9a0b42c09d712777b2edb4c5e0cb6baf21e988f0`
+- License: MIT OR Apache-2.0
+- License texts: `licenses/BASEVIEW-LICENSE-MIT` and `licenses/BASEVIEW-LICENSE-APACHE`
+
+A locally patched copy is included in `vendor/baseview`. Embedded Windows
+windows leave the host process's DPI awareness unchanged; see
+`vendor/baseview/RUSTEL-PATCH.md`.
+
 ## Redistribution
 
 Keep the accompanying license files and notices, provide corresponding source as required by the applicable licenses, and audit dependency notices before a public release. VST is a trademark of Steinberg Media Technologies GmbH.

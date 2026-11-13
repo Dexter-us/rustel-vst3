@@ -1,5 +1,6 @@
 [workspace]
 members = ["plugin", "xtask"]
+exclude = ["vendor/baseview"]
 resolver = "2"
 
 [workspace.package]
@@ -14,6 +15,9 @@ nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
 nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
 rustel-engine = { git = "https://github.com/tzfm/rustel.git", rev = "c60f974b4bc4f3e1fbb79d7982089aa15451b6fe", default-features = false, features = ["session"] }
+
+[patch."https://github.com/RustAudio/baseview.git"]
+baseview = { path = "vendor/baseview" }
 
 [profile.release]
 panic = "unwind"
