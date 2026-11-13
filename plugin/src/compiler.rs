@@ -191,6 +191,20 @@ mod tests {
                     )
                     .is_err()
                 );
+                assert!(
+                    compile(
+                        r#"note("c3").csound("triangle")"#,
+                        48_000,
+                        120.0,
+                        1,
+                        4,
+                        false,
+                        "",
+                        &cancelled
+                    )
+                    .is_err(),
+                    "native Csound scores must be refused unless the user opts in"
+                );
                 let mut plan = compile(
                     r#"note("c4 e4 g4 c5").s("sine").gain(0.2)"#,
                     48_000,
