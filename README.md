@@ -2,6 +2,8 @@
 
 A native Windows x64 VST3 instrument built on [Rustel](https://github.com/tzfm/rustel), the Rust engine for Strudel patterns. Independent project, not an official Rustel release.
 
+Plugin manufacturer: **Dexter U.S.**
+
 **Status: early prototype.** Source implementation is available. A successful Windows Actions run produces a development bundle; that is not a claim of DAW compatibility or a stable release. Native window and Windows DAW testing are still required.
 
 The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. The focused audio check verifies that a prepared four-note synth phrase produces finite, audible stereo samples and that invalid JavaScript is refused.

@@ -27,7 +27,7 @@ impl Default for RustelPlugin {
 
 impl Plugin for RustelPlugin {
     const NAME: &'static str = "Rustel";
-    const VENDOR: &'static str = "Rustel VST3 contributors";
+    const VENDOR: &'static str = "Dexter U.S.";
     const URL: &'static str = "https://github.com/Dexter-us/rustel-vst3";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -79,3 +79,13 @@ impl Vst3Plugin for RustelPlugin {
 }
 
 nih_export_vst3!(RustelPlugin);
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn reports_requested_manufacturer() {
+        assert_eq!(RustelPlugin::VENDOR, "Dexter U.S.");
+    }
+}

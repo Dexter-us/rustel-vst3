@@ -21,6 +21,8 @@ https://github.com/RustAudio/baseview/issues/107
    the score fills the left pane, and the right-hand controls are not clipped.
 4. Verify that clicks and text selection line up with the drawn controls.
 5. Close and reopen the editor several times; placement should stay identical.
+   Also remove the plugin entirely and load a new instance without restarting
+   VSTHost; the first instance and replacement must have identical placement.
 6. Repeat at 100%, 125%, and 150% Windows display scaling, restarting VSTHost
    between runs. If available, repeat on monitors with different scaling.
 7. Check that opening Rustel does not change the host or other plugins' scaling.
