@@ -1,0 +1,28 @@
+[workspace]
+members = ["plugin", "xtask"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+rust-version = "1.98.1"
+repository = "https://github.com/Dexter-us/rustel-vst3"
+
+[workspace.dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
+rustel-engine = { git = "https://github.com/tzfm/rustel.git", rev = "c60f974b4bc4f3e1fbb79d7982089aa15451b6fe", default-features = false, features = ["session"] }
+
+[profile.release]
+panic = "unwind"
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+
+[profile.dev.package.rustel-audio]
+opt-level = 3
+
+[profile.dev.package.rustel-core]
+opt-level = 2

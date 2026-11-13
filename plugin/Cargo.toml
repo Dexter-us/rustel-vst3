@@ -1,0 +1,21 @@
+[package]
+name = "rustel-vst3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "rustel_vst3"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nih_plug.workspace = true
+nih_plug_egui.workspace = true
+rustel-engine.workspace = true
+crossbeam-queue = "0.3"
+parking_lot = "0.12"
+
+[features]
+assert-process-allocs = ["nih_plug/assert_process_allocs"]

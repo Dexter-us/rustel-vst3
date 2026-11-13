@@ -1,0 +1,54 @@
+name: Windows VST3
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check the plugin
+        run: cargo check --workspace --locked
+      - name: Run focused checks
+        run: cargo test --workspace --locked -- --test-threads=1
+      - name: Build the Windows x64 VST3 bundle
+        run: cargo xtask bundle rustel-vst3 --release --locked
+      - name: Assemble download
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item -Recurse target/bundled/Rustel.vst3 package/
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md package/
+          Copy-Item -Recurse licenses package/
+          Copy-Item scripts/install-windows.ps1 package/
+          if (!(Test-Path package/Rustel.vst3/Contents/x86_64-win/Rustel.vst3)) {
+            throw "The Windows VST3 binary is missing."
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rustel-Windows-x64
+          path: package/
+          if-no-files-found: error
+          retention-days: 14
