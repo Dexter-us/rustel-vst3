@@ -196,19 +196,38 @@ impl Engine {
             let mut pcm = [0.0_f32; 128];
             if let Some(plan) = &mut self.plan {
                 if plan.sample_rate == self.sample_rate.round() as u32 {
-                    if playing {
-                        let begin = start_beat + offset as f64 * beats_per_frame;
-                        admit(
-                            plan,
-                            begin,
-                            begin + frames as f64 * beats_per_frame,
-                            beats_per_frame,
-                            self.frame + offset as u64,
-                            bpm,
-                            &self.shared.refused,
-                        );
+                    if let Some(phrase) = &plan.rendered_phrase {
+                        // A rendered Csound phrase is never rate-shifted to
+                        // follow a tempo change. The worker prepares a new
+                        // phrase for the new tempo; until then this path is
+                        // silent rather than changing the instrument's pitch.
+                        let tempo_matches = self.params.allow_csound.value()
+                            && (plan.rendered_bpm - bpm).abs() < 0.01;
+                        if playing && tempo_matches && plan.period_beats > 0.0 {
+                            let phrase_frames = phrase.len() / 2;
+                            for index in 0..frames {
+                                let beat = start_beat + (offset + index) as f64 * beats_per_frame;
+                                let source_frame =
+                                    rendered_frame_at(beat, plan.period_beats, phrase_frames);
+                                pcm[index * 2] = phrase[source_frame * 2];
+                                pcm[index * 2 + 1] = phrase[source_frame * 2 + 1];
+                            }
+                        }
+                    } else {
+                        if playing {
+                            let begin = start_beat + offset as f64 * beats_per_frame;
+                            admit(
+                                plan,
+                                begin,
+                                begin + frames as f64 * beats_per_frame,
+                                beats_per_frame,
+                                self.frame + offset as u64,
+                                bpm,
+                                &self.shared.refused,
+                            );
+                        }
+                        plan.backend.process_block(&mut pcm[..frames * 2], frames);
                     }
-                    plan.backend.process_block(&mut pcm[..frames * 2], frames);
                 }
             }
             for index in 0..frames {
@@ -233,6 +252,12 @@ impl Engine {
         self.frame = self.frame.saturating_add(count as u64);
         self.shared.peak.store(peak, Ordering::Relaxed);
     }
+}
+
+fn rendered_frame_at(beat: f64, period_beats: f64, phrase_frames: usize) -> usize {
+    let local_beat = beat.rem_euclid(period_beats);
+    (((local_beat / period_beats) * phrase_frames as f64).floor() as usize)
+        .min(phrase_frames.saturating_sub(1))
 }
 
 fn admit(
@@ -269,9 +294,23 @@ fn admit(
     }
 }
 
+#[cfg(test)]
+mod rendered_phrase_tests {
+    use super::rendered_frame_at;
+
+    #[test]
+    fn rendered_phrase_wraps_at_cycle_boundary_and_handles_seek() {
+        assert_eq!(rendered_frame_at(0.0, 4.0, 400), 0);
+        assert_eq!(rendered_frame_at(2.0, 4.0, 400), 200);
+        assert_eq!(rendered_frame_at(4.0, 4.0, 400), 0);
+        assert_eq!(rendered_frame_at(5.0, 4.0, 400), 100);
+        assert_eq!(rendered_frame_at(-1.0, 4.0, 400), 300);
+    }
+}
+
 fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
     let mut last_request = u64::MAX;
-    let mut last_key = (0, 0, 0, 0_u64);
+    let mut last_key = (0, 0, 0, 0_u64, false, String::new());
     let mut last_applied = String::new();
     while !shared.shutdown.load(Ordering::Acquire) {
         while shared.retired.pop().is_some() {}
@@ -280,7 +319,16 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
         let bpm = f64::from_bits(shared.bpm.load(Ordering::Relaxed));
         let cycles = params.cycles.value();
         let beats = params.beats_per_cycle.value();
-        let key = (sample_rate, cycles, beats, (bpm * 100.0).round() as u64);
+        let allow_csound = params.allow_csound.value();
+        let orchestra_root = params.csound_orchestra_root.lock().clone();
+        let key = (
+            sample_rate,
+            cycles,
+            beats,
+            (bpm * 100.0).round() as u64,
+            allow_csound,
+            orchestra_root.clone(),
+        );
         let applied = params.applied.lock().clone();
         if sample_rate != 0
             && (request != last_request || key != last_key || applied != last_applied)
@@ -291,13 +339,27 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
             } else {
                 applied.clone()
             };
-            *shared.status.lock() = "Preparing score…".into();
-            let result =
-                compiler::compile(&source, sample_rate, bpm, cycles, beats, &shared.shutdown);
+            *shared.status.lock() = if allow_csound {
+                "Preparing score and rendering trusted Csound phrase…".into()
+            } else {
+                "Preparing score…".into()
+            };
+            let result = compiler::compile(
+                &source,
+                sample_rate,
+                bpm,
+                cycles,
+                beats,
+                allow_csound,
+                &orchestra_root,
+                &shared.shutdown,
+            );
             match result {
                 Ok(plan) => {
                     let count = plan.notes.len();
                     let diagnostics = plan.diagnostics.clone();
+                    let rendered = plan.rendered_phrase.is_some();
+                    let rendered_bpm = plan.rendered_bpm;
                     // Only the worker publishes plans. Removing an obsolete,
                     // unconsumed plan here frees it away from the audio thread.
                     let _ = shared.ready.pop();
@@ -305,7 +367,16 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
                         Ok(()) => {
                             *params.applied.lock() = source.clone();
                             last_applied = source;
-                            *shared.status.lock() = if diagnostics.is_empty() {
+                            *shared.status.lock() = if rendered && diagnostics.is_empty() {
+                                format!(
+                                    "Ready · Csound-rendered phrase · {cycles}-cycle repeat · {:.1} BPM",
+                                    rendered_bpm
+                                )
+                            } else if rendered {
+                                format!(
+                                    "Ready · Csound-rendered phrase · {cycles}-cycle repeat\n{diagnostics}"
+                                )
+                            } else if diagnostics.is_empty() {
                                 format!("Ready · {count} notes · {cycles}-cycle repeating phrase")
                             } else {
                                 format!("Ready · {count} notes\n{diagnostics}")

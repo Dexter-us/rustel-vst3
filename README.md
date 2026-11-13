@@ -18,6 +18,7 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 - Save the draft, last accepted score, phrase settings, gain, transport options, and window state inside the DAW project.
 - Keep the last accepted phrase when an edit fails.
 - Turn off **Follow DAW** for a free-running preview, if the DAW continues processing audio while stopped.
+- Opt in to **Allow native Csound** to use Rustel's `.csound()`, `.csoundm()`, inline `loadCSound`, and trusted `.orc` files.
 
 ## Important: repeating phrases, not an unbounded interpreter
 
@@ -67,9 +68,24 @@ stack(
 
 Start DAW playback after the status says **Ready**. Loading a preset only replaces the draft; press **Evaluate** to apply it. Output gain starts at −6 dB. This is not a brick-wall limiter: keep listening volume low while trying scores.
 
+## Csound
+
+Install a double-precision Csound 6.18 (or later 6.x) shared library separately; this plugin bundle does not include Csound. Rustel looks for `csound64.dll`/`libcsound64.dll`, or use the host process environment variable `RUSTEL_CSOUND_LIBRARY` to point to the shared library. Restart the DAW after changing environment variables.
+
+Csound is **off by default**. Enable **Allow native Csound** only for scores you trust: an orchestra can use native opcodes to access files and run processes with the DAW's permissions. For local `.orc` files, enter the full path to a trusted folder in **Trusted .orc folder**, then use Rustel's `await loadOrc("local:voice.orc")` in the score. The file loader confines text reads to that folder; it cannot restrict what the compiled orchestra does. Inline `loadCSound` definitions need no folder.
+
+Example Csound score after enabling permission and installing Csound:
+
+```javascript
+note("c3 eb3 g3 bb3").csound("triangle organ").gain(0.45).slow(2)
+```
+
+Rustel renders Csound phrases off the audio callback. The rendered phrase repeats at its chosen tempo; changing DAW tempo prepares a new render off-thread, and playback stays silent until that render is ready rather than pitch-shifting the orchestra. Rendered phrases are limited to 128 MiB of stereo float audio.
+
 ## Current limits
 
 - No external sample library, soundfonts, room/reverb, live audio input, MIDI output, external hardware, Hydra, or nested VST plugins.
+- Csound needs a separate compatible shared-library install on each Windows machine; the VST3 does not bundle it.
 - No syntax highlighting, sample browser, or full Rustel terminal Studio.
 - No unlimited evolving patterns: use the explicit repeating phrase length.
 - Maximum 128 KiB score, 16,384 prepared events, 64-voice target polyphony, 8–192 kHz audio.

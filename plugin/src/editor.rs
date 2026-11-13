@@ -65,6 +65,20 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     ui.heading("Transport");
                     toggle(ui, setter, &params.enabled, "Enabled");
                     toggle(ui, setter, &params.follow_host, "Follow DAW");
+                    toggle(ui, setter, &params.allow_csound, "Allow native Csound");
+                    ui.small("Trusted orchestra code can access files and run processes. Only enable scores you trust.");
+                    ui.label("Trusted .orc folder (optional)");
+                    let mut orchestra_root = params.csound_orchestra_root.lock().clone();
+                    if ui
+                        .add(
+                            TextEdit::singleline(&mut orchestra_root)
+                                .hint_text("Full path to a trusted folder"),
+                        )
+                        .changed()
+                    {
+                        *params.csound_orchestra_root.lock() = orchestra_root;
+                        mark_dirty(setter, &params);
+                    }
                     if !params.follow_host.value() {
                         ui.small("Free-run preview. Your DAW must still process audio.");
                     }

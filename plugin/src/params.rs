@@ -18,12 +18,16 @@ pub struct RustelParams {
     pub draft: Arc<Mutex<String>>,
     #[persist = "applied-score"]
     pub applied: Arc<Mutex<String>>,
+    #[persist = "csound-orchestra-root"]
+    pub csound_orchestra_root: Arc<Mutex<String>>,
     #[id = "gain"]
     pub gain: FloatParam,
     #[id = "enabled"]
     pub enabled: BoolParam,
     #[id = "follow-host"]
     pub follow_host: BoolParam,
+    #[id = "allow-csound"]
+    pub allow_csound: BoolParam,
     #[id = "cycles"]
     pub cycles: IntParam,
     #[id = "beats-per-cycle"]
@@ -39,6 +43,7 @@ impl Default for RustelParams {
             editor: EguiState::from_size(900, 650),
             draft: Arc::new(Mutex::new(DEFAULT_SCORE.into())),
             applied: Arc::new(Mutex::new(DEFAULT_SCORE.into())),
+            csound_orchestra_root: Arc::new(Mutex::new(String::new())),
             gain: FloatParam::new(
                 "Output",
                 util::db_to_gain(-6.0),
@@ -54,6 +59,7 @@ impl Default for RustelParams {
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
             enabled: BoolParam::new("Enabled", true),
             follow_host: BoolParam::new("Follow DAW", true),
+            allow_csound: BoolParam::new("Allow native Csound", false),
             cycles: IntParam::new("Phrase cycles", 16, IntRange::Linear { min: 1, max: 64 }),
             beats_per_cycle: IntParam::new(
                 "Beats per cycle",
