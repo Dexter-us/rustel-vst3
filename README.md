@@ -32,11 +32,11 @@ Notes and gates follow DAW tempo without pitch shifting. Tempo-dependent effect 
 
 1. Open this repository's **Actions → Windows VST3** page.
 2. Open a successful run and download **Rustel-Windows-x64**.
-3. Extract the download. Keep the entire `Rustel.vst3` directory, not just its inner binary. The same folder also contains `rustel.exe`, the full upstream CLI, and `Rustel-CLI-Source.zip`.
-4. Close your DAW and copy the bundle to `%LOCALAPPDATA%\Programs\Common\VST3`, or to a VST3 folder your DAW scans.
-5. Rescan VST3 plugins and load **Rustel** as an instrument on a track.
+3. Extract the download. Keep the entire `Rustel.vst3` directory, not just its inner binary. The download also contains `rustel.exe`, the full upstream CLI, and the bundled Csound runtime.
+4. Close your DAW and run `install-windows.ps1` from PowerShell after reviewing it. It installs Rustel and Csound 6.18.1 for your Windows user, configures the paths Rustel needs, and preserves any previous install in a backup folder.
+5. Reopen your DAW, rescan VST3 plugins, and load **Rustel** as an instrument on a track.
 
-The included `install-windows.ps1` performs a current-user install. Run it from PowerShell after reviewing it. It refuses to overwrite an existing installation. Some hosts only scan `C:\Program Files\Common Files\VST3`; installing there requires administrator permission.
+The included installer needs no administrator permission. It puts the plugin in `%LOCALAPPDATA%\Programs\Common\VST3` and Csound in `%LOCALAPPDATA%\Programs\Rustel\Csound-6.18.1`. Existing files are renamed to a timestamped backup before replacement. The installer sets per-user `RUSTEL_CSOUND_LIBRARY`, `OPCODE6DIR64`, and `PATH` values; restart open DAWs before using Csound. Some hosts only scan `C:\Program Files\Common Files\VST3`; that location requires administrator permission and is not used by this script.
 
 To use the command-line app from PowerShell, run it in the extracted package folder:
 
@@ -87,11 +87,11 @@ Start DAW playback after the status says **Ready**. Loading a preset only replac
 
 ## Csound
 
-Install a double-precision Csound 6.18 (or later 6.x) shared library separately; this plugin bundle does not include Csound. Rustel looks for `csound64.dll`/`libcsound64.dll`, or use the host process environment variable `RUSTEL_CSOUND_LIBRARY` to point to the shared library. Restart the DAW after changing environment variables.
+The Windows download includes the official double-precision Csound 6.18.1 runtime and standard opcode DLLs. The installer configures Rustel to use that copy; you do not need a separate Csound installation. The Microsoft Visual C++ 2015–2022 x64 runtime is also required; the installer checks for it and prints Microsoft's download link if it is missing. Rustel currently supports Csound 6.18 or later within the 6.x series, so this bundle does not use Csound 7.
 
 Csound is **off by default**. Enable **Allow native Csound** only for scores you trust: an orchestra can use native opcodes to access files and run processes with the DAW's permissions. For local `.orc` files, enter the full path to a trusted folder in **Trusted .orc folder**, then use Rustel's `await loadOrc("local:voice.orc")` in the score. The file loader confines text reads to that folder; it cannot restrict what the compiled orchestra does. Inline `loadCSound` definitions need no folder.
 
-Example Csound score after enabling permission and installing Csound:
+Example Csound score after enabling permission:
 
 ```javascript
 note("c3 eb3 g3 bb3").csound("triangle organ").gain(0.45).slow(2)
@@ -102,7 +102,7 @@ Rustel renders Csound phrases off the audio callback. The rendered phrase repeat
 ## Current limits
 
 - No external sample library, soundfonts, room/reverb, live audio input, MIDI output, external hardware, Hydra, or nested VST plugins.
-- Csound needs a separate compatible shared-library install on each Windows machine; the VST3 does not bundle it.
+- The bundled Csound runtime is the 6.18.1 Windows x64 double-precision build; Csound 7 and 32-bit hosts are not supported.
 - No syntax highlighting, sample browser, or full Rustel terminal Studio.
 - No unlimited evolving patterns: use the explicit repeating phrase length.
 - Maximum 128 KiB score, 16,384 prepared events, 64-voice target polyphony, 8–192 kHz audio.
@@ -118,7 +118,7 @@ Rustel renders Csound phrases off the audio callback. The rendered phrase repeat
 - `xtask`: NIH-plug bundle generation.
 - `.github/workflows/windows.yml`: Windows compilation, focused checks, and download packaging.
 
-The plugin engine and bundled CLI are pinned to Rustel revision `c60f974b4bc4f3e1fbb79d7982089aa15451b6fe`; `Cargo.lock` pins the plugin dependency graph. The package includes the matching upstream CLI source archive and notices. The plugin does not open a second audio device or require a web server, account, API key, or network access during playback.
+The plugin engine and bundled CLI are pinned to Rustel revision `c60f974b4bc4f3e1fbb79d7982089aa15451b6fe`; `Cargo.lock` pins the plugin dependency graph. The package includes the matching upstream CLI source archive and notices. It also includes the unmodified official Csound 6.18.1 Windows runtime; see `CSOUND-RUNTIME-NOTICE.md` and `licenses/CSOUND-COPYING`. The plugin does not open a second audio device or require a web server, account, API key, or network access during playback.
 
 ## License
 

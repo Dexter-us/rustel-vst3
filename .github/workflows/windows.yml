@@ -57,6 +57,31 @@ jobs:
           cargo update --manifest-path rustel-cli-source/Cargo.toml --package pulseaudio --precise 0.3.2
       - name: Build the full Windows command-line app
         run: cargo build --manifest-path rustel-cli-source/Cargo.toml --package rustel --release --locked
+      - name: Fetch and verify the supported Csound runtime
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "Csound-6.18.1-windows-x64-binaries.zip"
+          $url = "https://github.com/csound/csound/releases/download/6.18.1/Csound-6.18.1-windows-x64-binaries.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $expected = "bd499ac6f476d98c6ae951a8fbfda365e594ef34bcf480c5a273281df940c220"
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "The official Csound 6.18.1 archive failed its SHA-256 check."
+          }
+          $extract = Join-Path $env:RUNNER_TEMP "csound-6.18.1"
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+          $runtime = Join-Path $extract "build/Release"
+          foreach ($required in @("csound64.dll", "stdutil.dll")) {
+            if (!(Test-Path (Join-Path $runtime $required))) {
+              throw "Csound runtime file is missing: $required"
+            }
+          }
+          "CSOUND_RUNTIME=$runtime" >> $env:GITHUB_ENV
+          $copying = Join-Path $env:RUNNER_TEMP "CSOUND-COPYING"
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/csound/csound/6.18.1/COPYING" `
+            -OutFile $copying
+          "CSOUND_COPYING=$copying" >> $env:GITHUB_ENV
       - name: Assemble download
         shell: pwsh
         run: |
@@ -68,6 +93,11 @@ jobs:
           Copy-Item scripts/install-windows.ps1 package/
           Copy-Item rustel-cli-source/LICENSE package/licenses/RUSTEL-CLI-LICENSE
           Copy-Item rustel-cli-source/NOTICE.md package/licenses/RUSTEL-CLI-NOTICE.md
+          New-Item -ItemType Directory -Force package/CsoundRuntime | Out-Null
+          Get-ChildItem $env:CSOUND_RUNTIME -Filter *.dll |
+            Copy-Item -Destination package/CsoundRuntime
+          Copy-Item $env:CSOUND_COPYING package/licenses/CSOUND-COPYING
+          Copy-Item licenses/CSOUND-RUNTIME-NOTICE.md package/
           $sourceFiles = Get-ChildItem rustel-cli-source -Force |
             Where-Object { $_.Name -notin @(".git", "target") }
           Compress-Archive -Path $sourceFiles.FullName -DestinationPath package/Rustel-CLI-Source.zip
@@ -79,6 +109,22 @@ jobs:
           }
           if (!(Test-Path package/Rustel-CLI-Source.zip)) {
             throw "The Rustel CLI source archive is missing."
+          }
+          if (!(Test-Path package/CsoundRuntime/csound64.dll) -or
+              !(Test-Path package/CsoundRuntime/stdutil.dll) -or
+              !(Test-Path package/licenses/CSOUND-COPYING)) {
+            throw "The bundled Csound runtime or its license is missing."
+          }
+      - name: Install and smoke-test the Windows package
+        shell: pwsh
+        run: |
+          ./scripts/install-windows.ps1 -Bundle "$PWD/package/Rustel.vst3" `
+            -CsoundRuntime "$PWD/package/CsoundRuntime" `
+            -Destination "$env:RUNNER_TEMP/rustel-vst3-test" `
+            -CsoundDestination "$env:RUNNER_TEMP/rustel-csound-test"
+          if (!(Test-Path "$env:RUNNER_TEMP/rustel-vst3-test/Rustel.vst3/Contents/x86_64-win/Rustel.vst3") -or
+              !(Test-Path "$env:RUNNER_TEMP/rustel-csound-test/csound64.dll")) {
+            throw "The bundled installer did not install the plugin and Csound runtime."
           }
       - uses: actions/upload-artifact@v4
         with:

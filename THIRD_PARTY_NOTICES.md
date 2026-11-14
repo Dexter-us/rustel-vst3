@@ -24,6 +24,13 @@ The framework's license is also included in `licenses/NIH-PLUG-LICENSE`.
 
 The pinned framework's VST3 bindings and transitive dependencies have their own licenses, including GPL-3.0 licensing in the VST3 bindings. This plugin is distributed under AGPL-3.0-or-later; do not assume the resulting binary is an ISC-only or closed-source product.
 
+## Csound runtime
+
+- Project: https://github.com/csound/csound
+- Version: 6.18.1, official Windows x64 double-precision binary bundle
+- License: LGPL-2.1
+- The Windows download includes the unmodified runtime DLLs, the license text, and a link to the corresponding upstream source archive in `CSOUND-RUNTIME-NOTICE.md`.
+
 ## Baseview
 
 - Project: https://github.com/RustAudio/baseview
