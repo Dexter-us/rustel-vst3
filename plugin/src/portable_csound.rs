@@ -19,10 +19,6 @@ pub fn configure() {
 
     static CONFIGURED: Once = Once::new();
     CONFIGURED.call_once(|| {
-        if std::env::var_os("RUSTEL_CSOUND_LIBRARY").is_some() {
-            return;
-        }
-
         let Some(module_file) = current_module_file() else {
             return;
         };
@@ -34,12 +30,10 @@ pub fn configure() {
             return;
         }
 
-        // These settings affect only the DAW process. Existing explicit Csound
-        // library paths are respected, and no Windows user settings are changed.
+        // Prefer this package's matching Csound copy. These settings affect
+        // only the DAW process; no Windows user settings are changed.
         set_process_variable("RUSTEL_CSOUND_LIBRARY", library.as_os_str());
-        if std::env::var_os("OPCODE6DIR64").is_none() {
-            set_process_variable("OPCODE6DIR64", runtime_directory.as_os_str());
-        }
+        set_process_variable("OPCODE6DIR64", runtime_directory.as_os_str());
 
         let runtime_text = runtime_directory.to_string_lossy();
         let current_path = std::env::var_os("PATH").unwrap_or_default();
