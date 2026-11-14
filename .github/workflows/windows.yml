@@ -50,6 +50,11 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $resolved -ne $revision) {
             throw "The checked-out Rustel CLI source does not match the pinned revision."
           }
+      - name: Prepare Windows-only upstream dependency resolution
+        shell: pwsh
+        run: |
+          git apply --directory=rustel-cli-source scripts/windows-cli-pulseaudio.patch
+          cargo update --manifest-path rustel-cli-source/Cargo.toml --package pulseaudio --precise 0.3.2
       - name: Build the full Windows command-line app
         run: cargo build --manifest-path rustel-cli-source/Cargo.toml --package rustel --release --locked
       - name: Assemble download
@@ -58,7 +63,7 @@ jobs:
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item -Recurse target/bundled/Rustel.vst3 package/
           Copy-Item rustel-cli-source/target/release/rustel.exe package/
-          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md package/
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, rustel-cli-revision.txt package/
           Copy-Item -Recurse licenses package/
           Copy-Item scripts/install-windows.ps1 package/
           Copy-Item rustel-cli-source/LICENSE package/licenses/RUSTEL-CLI-LICENSE

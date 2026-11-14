@@ -63,8 +63,12 @@ cargo test --workspace --locked -- --test-threads=1
 cargo xtask bundle rustel-vst3 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
+git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
+cargo update --manifest-path rustel-cli-source/Cargo.toml --package pulseaudio --precise 0.3.2
 cargo build --manifest-path rustel-cli-source/Cargo.toml --package rustel --release --locked
 ```
+
+The Windows-only patch removes an upstream PulseAudio git fork that is not publicly fetchable. The CLI still builds with all upstream default features; PulseAudio is a Linux-only backend and is not used by the Windows executable. The lockfile is updated to the matching public `pulseaudio` 0.3.2 crate before the locked build.
 
 Outputs: `target/bundled/Rustel.vst3` and `rustel-cli-source/target/release/rustel.exe`. Build on Windows x64 for Windows binaries. A Linux `.so` cannot be installed in a Windows DAW.
 
