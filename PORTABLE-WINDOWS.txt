@@ -3,6 +3,8 @@ Rustel for Windows — portable ZIP
 This archive has no installer and does not change Windows settings. Extract the
 whole ZIP to a folder you want to keep. Keep Rustel.vst3 and CsoundRuntime
 together in that folder; Rustel finds its bundled Csound automatically.
+Load and Save start in a Scores subfolder beside the plugin bundle and create
+that folder when needed, so saved scores move with the portable files.
 
 In VSTHost, add the extracted folder to the VST3 plugin scan paths and rescan.
 If you prefer the standard VST3 folder, copy both Rustel.vst3 and CsoundRuntime

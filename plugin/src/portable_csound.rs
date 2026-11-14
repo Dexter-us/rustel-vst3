@@ -3,12 +3,22 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(any(windows, test))]
-fn runtime_directory_for_module(module_file: &Path) -> Option<PathBuf> {
+fn package_directory_for_module(module_file: &Path) -> Option<PathBuf> {
     let architecture_directory = module_file.parent()?;
     let contents_directory = architecture_directory.parent()?;
     let bundle_directory = contents_directory.parent()?;
-    let package_directory = bundle_directory.parent()?;
-    Some(package_directory.join("CsoundRuntime"))
+    bundle_directory.parent().map(Path::to_path_buf)
+}
+
+#[cfg(any(windows, test))]
+fn scores_directory_for_module(module_file: &Path) -> Option<PathBuf> {
+    Some(package_directory_for_module(module_file)?.join("Scores"))
+}
+
+#[cfg(windows)]
+pub fn portable_scores_directory() -> Option<PathBuf> {
+    let module_file = current_module_file()?;
+    scores_directory_for_module(&module_file)
 }
 
 #[cfg(windows)]
@@ -22,9 +32,10 @@ pub fn configure() {
         let Some(module_file) = current_module_file() else {
             return;
         };
-        let Some(runtime_directory) = runtime_directory_for_module(&module_file) else {
+        let Some(package_directory) = package_directory_for_module(&module_file) else {
             return;
         };
+        let runtime_directory = package_directory.join("CsoundRuntime");
         let library = runtime_directory.join("csound64.dll");
         if !library.is_file() || !runtime_directory.join("stdutil.dll").is_file() {
             return;
@@ -130,13 +141,17 @@ mod tests {
             .join("Rustel.vst3");
 
         assert_eq!(
-            runtime_directory_for_module(&module),
-            Some(PathBuf::from("RustelPortable").join("CsoundRuntime"))
+            package_directory_for_module(&module),
+            Some(PathBuf::from("RustelPortable"))
+        );
+        assert_eq!(
+            scores_directory_for_module(&module),
+            Some(PathBuf::from("RustelPortable").join("Scores"))
         );
     }
 
     #[test]
     fn missing_module_parent_is_not_a_portable_package() {
-        assert_eq!(runtime_directory_for_module(Path::new("Rustel.vst3")), None);
+        assert_eq!(package_directory_for_module(Path::new("Rustel.vst3")), None);
     }
 }

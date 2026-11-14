@@ -41,7 +41,7 @@ pub fn write_score_file(path: &std::path::Path, source: &str) -> Result<(), Stri
 #[cfg(windows)]
 fn show_dialog(save: bool) -> Result<Option<PathBuf>, String> {
     use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::ptr;
 
     const OFN_OVERWRITEPROMPT: u32 = 0x0000_0002;
@@ -63,6 +63,21 @@ fn show_dialog(save: bool) -> Result<Option<PathBuf>, String> {
     .encode_utf16()
     .collect();
     let default_extension: Vec<u16> = "strudel\0".encode_utf16().collect();
+    let initial_directory: Vec<u16> = crate::portable_csound::portable_scores_directory()
+        .and_then(|directory| {
+            if fs::create_dir_all(&directory).is_ok() && directory.is_dir() {
+                Some(directory)
+            } else {
+                None
+            }
+        })
+        .map(|directory| directory.as_os_str().encode_wide().chain(Some(0)).collect())
+        .unwrap_or_default();
+    let initial_directory_pointer = if initial_directory.is_empty() {
+        ptr::null()
+    } else {
+        initial_directory.as_ptr()
+    };
     let mut file = vec![0u16; 32_768];
     let flags = OFN_EXPLORER
         | OFN_HIDEREADONLY
@@ -85,7 +100,7 @@ fn show_dialog(save: bool) -> Result<Option<PathBuf>, String> {
         max_file: file.len() as u32,
         file_title: ptr::null_mut(),
         max_file_title: 0,
-        initial_directory: ptr::null(),
+        initial_directory: initial_directory_pointer,
         title: title.as_ptr(),
         flags,
         file_offset: 0,
