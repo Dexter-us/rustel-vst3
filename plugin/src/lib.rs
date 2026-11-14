@@ -3,6 +3,7 @@ mod compiler;
 mod editor;
 mod engine;
 mod params;
+mod portable_csound;
 
 use nih_plug::prelude::*;
 use std::sync::Arc;
@@ -54,6 +55,7 @@ impl Plugin for RustelPlugin {
         config: &BufferConfig,
         _: &mut impl InitContext<Self>,
     ) -> bool {
+        portable_csound::configure();
         self.engine.initialize(config.sample_rate)
     }
 

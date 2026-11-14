@@ -32,11 +32,11 @@ Notes and gates follow DAW tempo without pitch shifting. Tempo-dependent effect 
 
 1. Open this repository's **Actions → Windows VST3** page.
 2. Open a successful run and download **Rustel-Windows-x64**.
-3. For no-installer use, download `Rustel-Windows-x64-Portable.zip` from the run's artifact and extract it. Copy the complete `Rustel.vst3` folder to a VST3 folder scanned by your DAW. The ZIP also contains `rustel.exe`, the upstream CLI, and Csound 6.18.1. Follow `README-PORTABLE.txt` to configure Csound manually; this step is optional for the built-in synths.
+3. For portable use, download `Rustel-Windows-x64-Portable.zip` from the run's artifact and extract the whole ZIP to a folder you want to keep. Add that folder to VSTHost's plugin scan paths and rescan. Keep `Rustel.vst3` and `CsoundRuntime` together; Rustel finds Csound there automatically. The ZIP also contains `rustel.exe` and the upstream CLI.
 4. Or extract the complete `Rustel-Windows-x64` artifact and run `install-windows.ps1` from PowerShell after reviewing it. It installs Rustel and Csound 6.18.1 for your Windows user, configures the paths Rustel needs, and preserves any previous install in a backup folder.
 5. Reopen your DAW, rescan VST3 plugins, and load **Rustel** as an instrument on a track.
 
-The installer needs no administrator permission. It puts the plugin in `%LOCALAPPDATA%\Programs\Common\VST3` and Csound in `%LOCALAPPDATA%\Programs\Rustel\Csound-6.18.1`. Existing files are renamed to a timestamped backup before replacement. The installer sets per-user `RUSTEL_CSOUND_LIBRARY`, `OPCODE6DIR64`, and `PATH` values; restart open DAWs before using Csound. Some hosts only scan `C:\Program Files\Common Files\VST3`; that location requires administrator permission and is not used by this script. The portable ZIP does not run a script or change system settings.
+The installer needs no administrator permission. It puts the plugin in `%LOCALAPPDATA%\Programs\Common\VST3` and Csound in `%LOCALAPPDATA%\Programs\Rustel\Csound-6.18.1`. Existing files are renamed to a timestamped backup before replacement. The installer sets per-user `RUSTEL_CSOUND_LIBRARY`, `OPCODE6DIR64`, and `PATH` values; restart open DAWs before using Csound. Some hosts only scan `C:\Program Files\Common Files\VST3`; that location requires administrator permission and is not used by this script. The portable ZIP does not run an installer or change persistent Windows settings.
 
 To use the command-line app from PowerShell, run it in the extracted package folder:
 
@@ -87,7 +87,7 @@ Start DAW playback after the status says **Ready**. Loading a preset only replac
 
 ## Csound
 
-The Windows downloads include the official double-precision Csound 6.18.1 runtime and standard opcode DLLs; you do not need a separate Csound installation. The Microsoft Visual C++ 2015–2022 x64 runtime is also required; the installer checks for it and prints Microsoft's download link if it is missing. Rustel currently supports Csound 6.18 or later within the 6.x series, so this bundle does not use Csound 7.
+The Windows downloads include the official double-precision Csound 6.18.1 runtime and standard opcode DLLs; you do not need a separate Csound installation. In the portable ZIP, keep `CsoundRuntime` beside `Rustel.vst3`; the plugin automatically points the current DAW process at the bundled copy. It does not write Windows user settings. The Microsoft Visual C++ 2015–2022 x64 runtime may also be needed; the installer checks for it and prints Microsoft's download link if it is missing. Rustel currently supports Csound 6.18 or later within the 6.x series, so this bundle does not use Csound 7.
 
 Csound is **off by default**. Enable **Allow native Csound** only for scores you trust: an orchestra can use native opcodes to access files and run processes with the DAW's permissions. For local `.orc` files, enter the full path to a trusted folder in **Trusted .orc folder**, then use Rustel's `await loadOrc("local:voice.orc")` in the score. The file loader confines text reads to that folder; it cannot restrict what the compiled orchestra does. Inline `loadCSound` definitions need no folder.
 
