@@ -7,11 +7,16 @@ use nih_plug_egui::{
 };
 use std::{sync::Arc, sync::atomic::Ordering, time::Duration};
 
+#[derive(Default)]
+struct ScoreFileUi {
+    message: String,
+}
+
 pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn Editor>> {
     let state: Arc<EguiState> = params.editor.clone();
     create_egui_editor(
         state,
-        (),
+        ScoreFileUi::default(),
         |ctx, _| {
             ctx.set_visuals(egui::Visuals::dark());
             let mut style = (*ctx.style()).clone();
@@ -20,7 +25,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
             style.spacing.item_spacing = egui::vec2(10.0, 10.0);
             ctx.set_style(style);
         },
-        move |ctx, setter, _| {
+        move |ctx, setter, file_ui| {
             ctx.request_repaint_after(Duration::from_millis(50));
             egui::TopBottomPanel::top("header").show(ctx, |ui| {
                 ui.add_space(8.0);
@@ -98,6 +103,10 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         ("Minor arpeggio", crate::params::DEFAULT_SCORE),
                         ("Soft pulse", r#"note("c3 ~ eb3 g3").s("triangle").lpf(1200).gain(0.3)"#),
                         ("Kick + bass", r#"stack(s("bd*4").gain(0.6), note("c2 ~ g1 ~").s("sine").gain(0.35))"#),
+                        (
+                            "Csound triangle",
+                            r#"note("c3 eb3 g3 bb3").csound("triangle").gain(0.4).slow(2)"#,
+                        ),
                     ] {
                         if ui.button(name).clicked() {
                             *params.draft.lock() = source.into();
@@ -114,6 +123,20 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                 ui.horizontal(|ui| {
                     ui.heading("Score");
                     if ui
+                        .button("Load…")
+                        .on_hover_text("Load a .strudel or .txt score")
+                        .clicked()
+                    {
+                        load_score(&params, setter, file_ui);
+                    }
+                    if ui
+                        .button("Save…")
+                        .on_hover_text("Save the current draft")
+                        .clicked()
+                    {
+                        save_score(&params, file_ui);
+                    }
+                    if ui
                         .button(RichText::new("Evaluate").strong())
                         .on_hover_text("Ctrl+Enter · invalid edits keep the last good phrase")
                         .clicked()
@@ -125,6 +148,12 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         mark_dirty(setter, &params);
                     }
                 });
+                ui.small(
+                    "Click the editor below to type. Load and Save use .strudel or .txt files.",
+                );
+                if !file_ui.message.is_empty() {
+                    ui.colored_label(Color32::LIGHT_BLUE, &file_ui.message);
+                }
                 let mut draft = params.draft.lock().clone();
                 let mut changed = false;
                 egui::ScrollArea::both().show(ui, |ui| {
@@ -146,6 +175,46 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
             });
         },
     )
+}
+
+fn load_score(params: &RustelParams, setter: &ParamSetter, file_ui: &mut ScoreFileUi) {
+    let path = match crate::score_files::open_score() {
+        Ok(Some(path)) => path,
+        Ok(None) => return,
+        Err(error) => {
+            file_ui.message = error;
+            return;
+        }
+    };
+    let loaded = crate::score_files::read_score_file(&path);
+    match loaded {
+        Ok(source) => {
+            *params.draft.lock() = source;
+            mark_dirty(setter, params);
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            file_ui.message = format!("Loaded {name}. Press Evaluate to apply it.");
+        }
+        Err(error) => file_ui.message = error,
+    }
+}
+
+fn save_score(params: &RustelParams, file_ui: &mut ScoreFileUi) {
+    let path = match crate::score_files::save_score() {
+        Ok(Some(path)) => path,
+        Ok(None) => return,
+        Err(error) => {
+            file_ui.message = error;
+            return;
+        }
+    };
+    let draft = params.draft.lock().clone();
+    match crate::score_files::write_score_file(&path, &draft) {
+        Ok(()) => {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            file_ui.message = format!("Saved {name}.");
+        }
+        Err(error) => file_ui.message = format!("Could not save score: {error}"),
+    }
 }
 
 fn toggle(ui: &mut egui::Ui, setter: &ParamSetter, param: &BoolParam, label: &str) {

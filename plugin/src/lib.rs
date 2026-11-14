@@ -4,6 +4,7 @@ mod editor;
 mod engine;
 mod params;
 mod portable_csound;
+mod score_files;
 
 use nih_plug::prelude::*;
 use std::sync::Arc;

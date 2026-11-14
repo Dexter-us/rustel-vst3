@@ -10,7 +10,7 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 
 ## What this version does
 
-- Edit Strudel scores inside the native plugin window.
+- Edit Strudel scores inside the native plugin window, and load or save `.strudel` and `.txt` score files.
 - Press **Evaluate** or **Ctrl+Enter** to prepare the score without evaluating JavaScript in the audio callback.
 - Use built-in synths and the bundled `bd` kick sample.
 - Play stereo audio following DAW play/stop, tempo, song position, and loop jumps.
@@ -19,6 +19,7 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 - Keep the last accepted phrase when an edit fails.
 - Turn off **Follow DAW** for a free-running preview, if the DAW continues processing audio while stopped.
 - Opt in to **Allow native Csound** to use Rustel's `.csound()`, `.csoundm()`, inline `loadCSound`, and trusted `.orc` files.
+- Choose the **Csound triangle** example in the editor's Examples list to insert a ready-to-evaluate Csound score.
 
 ## Important: repeating phrases, not an unbounded interpreter
 
