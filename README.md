@@ -1,6 +1,6 @@
 # Rustel VST3
 
-A native Windows x64 VST3 instrument built on [Rustel](https://github.com/tzfm/rustel), the Rust engine for Strudel patterns. Independent project, not an official Rustel release.
+A native Windows x64 VST3 instrument built on [Rustel](https://github.com/tzfm/rustel), the Rust engine for Strudel patterns. Windows packages also include the upstream Rustel command-line app, built from the same pinned Rustel revision. Independent project, not an official Rustel release.
 
 Plugin manufacturer: **Dexter U.S.**
 
@@ -32,11 +32,21 @@ Notes and gates follow DAW tempo without pitch shifting. Tempo-dependent effect 
 
 1. Open this repository's **Actions → Windows VST3** page.
 2. Open a successful run and download **Rustel-Windows-x64**.
-3. Extract the download. Keep the entire `Rustel.vst3` directory, not just its inner binary.
+3. Extract the download. Keep the entire `Rustel.vst3` directory, not just its inner binary. The same folder also contains `rustel.exe`, the full upstream CLI, and `Rustel-CLI-Source.zip`.
 4. Close your DAW and copy the bundle to `%LOCALAPPDATA%\Programs\Common\VST3`, or to a VST3 folder your DAW scans.
 5. Rescan VST3 plugins and load **Rustel** as an instrument on a track.
 
 The included `install-windows.ps1` performs a current-user install. Run it from PowerShell after reviewing it. It refuses to overwrite an existing installation. Some hosts only scan `C:\Program Files\Common Files\VST3`; installing there requires administrator permission.
+
+To use the command-line app from PowerShell, run it in the extracted package folder:
+
+```powershell
+.\rustel.exe --help
+.\rustel.exe play song.strudel
+.\rustel.exe export song.strudel -o take.wav --duration 30s
+```
+
+It is the upstream CLI, not a reduced plugin control panel. See the [Rustel CLI guide](https://github.com/tzfm/rustel/blob/main/docs/cli.md) for its commands. The CLI and VST3 are separate programs; CLI features do not automatically appear in the plugin.
 
 If Actions is still running or failed, no verified Windows download is available from that run. Workflow artifacts expire after 14 days. No binary has been published as a stable release.
 
@@ -51,9 +61,12 @@ cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
 cargo xtask bundle rustel-vst3 --release --locked
+git clone https://github.com/tzfm/rustel.git rustel-cli-source
+git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
+cargo build --manifest-path rustel-cli-source/Cargo.toml --package rustel --release --locked
 ```
 
-Output: `target/bundled/Rustel.vst3`. Build on Windows x64 for a Windows x64 plugin. A Linux `.so` cannot be installed in a Windows DAW.
+Outputs: `target/bundled/Rustel.vst3` and `rustel-cli-source/target/release/rustel.exe`. Build on Windows x64 for Windows binaries. A Linux `.so` cannot be installed in a Windows DAW.
 
 The same workspace can be checked on Linux, with X11/OpenGL development libraries and a C compiler. On hosts whose dynamic loader reports a Rust compiler static-TLS error, set `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=32768` for the build command.
 
@@ -101,7 +114,7 @@ Rustel renders Csound phrases off the audio callback. The rendered phrase repeat
 - `xtask`: NIH-plug bundle generation.
 - `.github/workflows/windows.yml`: Windows compilation, focused checks, and download packaging.
 
-Upstream Rustel and NIH-plug are pinned to Git revisions; `Cargo.lock` pins their dependency graph. The plugin does not open a second audio device or require a web server, account, API key, or network access during playback.
+The plugin engine and bundled CLI are pinned to Rustel revision `c60f974b4bc4f3e1fbb79d7982089aa15451b6fe`; `Cargo.lock` pins the plugin dependency graph. The package includes the matching upstream CLI source archive and notices. The plugin does not open a second audio device or require a web server, account, API key, or network access during playback.
 
 ## License
 

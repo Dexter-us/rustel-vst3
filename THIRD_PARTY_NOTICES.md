@@ -7,7 +7,9 @@ This is an independent plugin project, not an official Rustel, Strudel, or Stein
 - Project: https://github.com/tzfm/rustel
 - Copyright: Rustel contributors
 - License: AGPL-3.0-or-later
-- Attribution and component notices: https://github.com/tzfm/rustel/blob/c60f974b4bc4f3e1fbb79d7982089aa15451b6fe/NOTICE.md
+- Revision: `c60f974b4bc4f3e1fbb79d7982089aa15451b6fe`
+- Attribution and component notices: `licenses/RUSTEL-NOTICE.md` for the plugin, `licenses/RUSTEL-CLI-NOTICE.md` for the CLI package
+- The Windows package includes `Rustel-CLI-Source.zip` with the corresponding upstream CLI source.
 
 Rustel began as a port of Strudel, which builds on TidalCycles. Its native sound engine and bundled sample are used by this plugin. The full upstream notice is included in `licenses/RUSTEL-NOTICE.md`.
 

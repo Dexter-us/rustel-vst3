@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -35,16 +35,45 @@ jobs:
         run: cargo test --workspace --locked -- --test-threads=1
       - name: Build the Windows x64 VST3 bundle
         run: cargo xtask bundle rustel-vst3 --release --locked
+      - name: Fetch the pinned upstream Rustel source
+        shell: pwsh
+        run: |
+          $revision = (Get-Content rustel-cli-revision.txt -Raw).Trim()
+          if ($revision -notmatch '^[0-9a-f]{40}$') {
+            throw "rustel-cli-revision.txt must contain a full Git commit hash."
+          }
+          git init rustel-cli-source
+          git -C rustel-cli-source remote add origin https://github.com/tzfm/rustel.git
+          git -C rustel-cli-source fetch --depth 1 origin $revision
+          git -C rustel-cli-source checkout --detach FETCH_HEAD
+          $resolved = (git -C rustel-cli-source rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $resolved -ne $revision) {
+            throw "The checked-out Rustel CLI source does not match the pinned revision."
+          }
+      - name: Build the full Windows command-line app
+        run: cargo build --manifest-path rustel-cli-source/Cargo.toml --package rustel --release --locked
       - name: Assemble download
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item -Recurse target/bundled/Rustel.vst3 package/
+          Copy-Item rustel-cli-source/target/release/rustel.exe package/
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md package/
           Copy-Item -Recurse licenses package/
           Copy-Item scripts/install-windows.ps1 package/
+          Copy-Item rustel-cli-source/LICENSE package/licenses/RUSTEL-CLI-LICENSE
+          Copy-Item rustel-cli-source/NOTICE.md package/licenses/RUSTEL-CLI-NOTICE.md
+          $sourceFiles = Get-ChildItem rustel-cli-source -Force |
+            Where-Object { $_.Name -notin @(".git", "target") }
+          Compress-Archive -Path $sourceFiles.FullName -DestinationPath package/Rustel-CLI-Source.zip
           if (!(Test-Path package/Rustel.vst3/Contents/x86_64-win/Rustel.vst3)) {
             throw "The Windows VST3 binary is missing."
+          }
+          if (!(Test-Path package/rustel.exe)) {
+            throw "The Windows Rustel CLI binary is missing."
+          }
+          if (!(Test-Path package/Rustel-CLI-Source.zip)) {
+            throw "The Rustel CLI source archive is missing."
           }
       - uses: actions/upload-artifact@v4
         with:
