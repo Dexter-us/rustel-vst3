@@ -245,6 +245,11 @@ unsafe fn wnd_proc_inner(
         }
         WM_LBUTTONDOWN | WM_LBUTTONUP | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_RBUTTONDOWN
         | WM_RBUTTONUP | WM_XBUTTONDOWN | WM_XBUTTONUP => {
+            if msg == WM_LBUTTONDOWN {
+                // Parent-hosted plugin windows do not always receive keyboard
+                // focus from the host automatically when clicked.
+                SetFocus(hwnd);
+            }
             let mut window = crate::Window::new(window_state.create_window());
 
             let mut mouse_button_counter = window_state.mouse_button_counter.get();

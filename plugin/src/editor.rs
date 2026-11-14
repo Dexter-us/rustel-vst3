@@ -10,6 +10,29 @@ use std::{sync::Arc, sync::atomic::Ordering, time::Duration};
 #[derive(Default)]
 struct ScoreFileUi {
     message: String,
+    dialog: Option<ScoreDialog>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScoreDialogMode {
+    Load,
+    Save,
+}
+
+struct ScoreDialog {
+    mode: ScoreDialogMode,
+    directory: std::path::PathBuf,
+    files: Vec<std::path::PathBuf>,
+    selected: Option<std::path::PathBuf>,
+    filename: String,
+    confirm_overwrite: bool,
+    error: Option<String>,
+}
+
+enum ScoreDialogAction {
+    Cancel,
+    Load(std::path::PathBuf),
+    Save(std::path::PathBuf),
 }
 
 pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn Editor>> {
@@ -127,14 +150,14 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         .on_hover_text("Load a .strudel or .txt score")
                         .clicked()
                     {
-                        load_score(&params, setter, file_ui);
+                        start_score_dialog(file_ui, ScoreDialogMode::Load);
                     }
                     if ui
                         .button("Save…")
                         .on_hover_text("Save the current draft")
                         .clicked()
                     {
-                        save_score(&params, file_ui);
+                        start_score_dialog(file_ui, ScoreDialogMode::Save);
                     }
                     if ui
                         .button(RichText::new("Evaluate").strong())
@@ -173,47 +196,171 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     mark_dirty(setter, &params);
                 }
             });
+            draw_score_dialog(ctx, file_ui, &params, setter);
         },
     )
 }
 
-fn load_score(params: &RustelParams, setter: &ParamSetter, file_ui: &mut ScoreFileUi) {
-    let path = match crate::score_files::open_score() {
-        Ok(Some(path)) => path,
-        Ok(None) => return,
+fn start_score_dialog(file_ui: &mut ScoreFileUi, mode: ScoreDialogMode) {
+    let directory = match crate::score_files::prepare_scores_directory() {
+        Ok(directory) => directory,
         Err(error) => {
             file_ui.message = error;
             return;
         }
     };
-    let loaded = crate::score_files::read_score_file(&path);
-    match loaded {
-        Ok(source) => {
-            *params.draft.lock() = source;
-            mark_dirty(setter, params);
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            file_ui.message = format!("Loaded {name}. Press Evaluate to apply it.");
+    let files = match crate::score_files::list_score_files(&directory) {
+        Ok(files) => files,
+        Err(error) => {
+            file_ui.message = error;
+            return;
         }
-        Err(error) => file_ui.message = error,
-    }
+    };
+    file_ui.message.clear();
+    file_ui.dialog = Some(ScoreDialog {
+        mode,
+        directory,
+        files,
+        selected: None,
+        filename: "score.strudel".into(),
+        confirm_overwrite: false,
+        error: None,
+    });
 }
 
-fn save_score(params: &RustelParams, file_ui: &mut ScoreFileUi) {
-    let path = match crate::score_files::save_score() {
-        Ok(Some(path)) => path,
-        Ok(None) => return,
-        Err(error) => {
-            file_ui.message = error;
-            return;
-        }
+fn draw_score_dialog(
+    ctx: &egui::Context,
+    file_ui: &mut ScoreFileUi,
+    params: &RustelParams,
+    setter: &ParamSetter,
+) {
+    let Some(dialog) = file_ui.dialog.as_mut() else {
+        return;
     };
-    let draft = params.draft.lock().clone();
-    match crate::score_files::write_score_file(&path, &draft) {
-        Ok(()) => {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            file_ui.message = format!("Saved {name}.");
+
+    let title = match dialog.mode {
+        ScoreDialogMode::Load => "Load Rustel score",
+        ScoreDialogMode::Save => "Save Rustel score",
+    };
+    let files = dialog.files.clone();
+    let mut window_open = true;
+    let mut action = None;
+    egui::Window::new(title)
+        .id(egui::Id::new("rustel-score-file-dialog"))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut window_open)
+        .show(ctx, |ui| {
+            ui.label(format!("Scores folder: {}", dialog.directory.display()));
+            ui.separator();
+            if dialog.mode == ScoreDialogMode::Save {
+                ui.label("Filename (.strudel or .txt)");
+                if ui.text_edit_singleline(&mut dialog.filename).changed() {
+                    dialog.confirm_overwrite = false;
+                }
+            }
+            if files.is_empty() {
+                ui.label("No saved scores yet.");
+            } else {
+                ui.label("Saved scores");
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        for path in &files {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            if ui
+                                .selectable_label(dialog.selected.as_ref() == Some(path), name)
+                                .clicked()
+                            {
+                                dialog.selected = Some(path.clone());
+                                if dialog.mode == ScoreDialogMode::Save {
+                                    dialog.filename = path
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .into_owned();
+                                    dialog.confirm_overwrite = false;
+                                }
+                            }
+                        }
+                    });
+            }
+            if let Some(error) = &dialog.error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+            }
+            if dialog.confirm_overwrite {
+                ui.colored_label(Color32::YELLOW, "That file already exists. Replace it?");
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if dialog.mode == ScoreDialogMode::Load {
+                    let selected = dialog.selected.clone();
+                    if ui
+                        .add_enabled(selected.is_some(), egui::Button::new("Load"))
+                        .clicked()
+                    {
+                        if let Some(path) = selected {
+                            action = Some(ScoreDialogAction::Load(path));
+                        }
+                    }
+                } else if ui
+                    .button(if dialog.confirm_overwrite {
+                        "Replace"
+                    } else {
+                        "Save"
+                    })
+                    .clicked()
+                {
+                    match crate::score_files::score_file_path(&dialog.directory, &dialog.filename) {
+                        Ok(path) if path.exists() && !dialog.confirm_overwrite => {
+                            dialog.confirm_overwrite = true;
+                        }
+                        Ok(path) => action = Some(ScoreDialogAction::Save(path)),
+                        Err(error) => dialog.error = Some(error),
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    action = Some(ScoreDialogAction::Cancel);
+                }
+            });
+        });
+
+    if !window_open || matches!(action, Some(ScoreDialogAction::Cancel)) {
+        file_ui.dialog = None;
+        return;
+    }
+    match action {
+        Some(ScoreDialogAction::Load(path)) => match crate::score_files::read_score_file(&path) {
+            Ok(source) => {
+                *params.draft.lock() = source;
+                mark_dirty(setter, params);
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                file_ui.message = format!("Loaded {name}. Press Evaluate to apply it.");
+                file_ui.dialog = None;
+            }
+            Err(error) => {
+                if let Some(dialog) = file_ui.dialog.as_mut() {
+                    dialog.error = Some(error);
+                }
+            }
+        },
+        Some(ScoreDialogAction::Save(path)) => {
+            let draft = params.draft.lock().clone();
+            match crate::score_files::write_score_file(&path, &draft) {
+                Ok(()) => {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    file_ui.message = format!("Saved {name}.");
+                    file_ui.dialog = None;
+                }
+                Err(error) => {
+                    if let Some(dialog) = file_ui.dialog.as_mut() {
+                        dialog.error = Some(format!("Could not save score: {error}"));
+                        dialog.confirm_overwrite = false;
+                    }
+                }
+            }
         }
-        Err(error) => file_ui.message = format!("Could not save score: {error}"),
+        Some(ScoreDialogAction::Cancel) | None => {}
     }
 }
 

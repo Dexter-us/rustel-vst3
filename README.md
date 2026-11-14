@@ -33,7 +33,7 @@ Notes and gates follow DAW tempo without pitch shifting. Tempo-dependent effect 
 
 1. Open this repository's **Actions → Windows VST3** page.
 2. Open a successful run and download **Rustel-Windows-x64**.
-3. For portable use, download `Rustel-Windows-x64-Portable.zip` from the run's artifact and extract the whole ZIP to a folder you want to keep. Add that folder to VSTHost's plugin scan paths and rescan. Keep `Rustel.vst3` and `CsoundRuntime` together; Rustel finds Csound there automatically. The score Load/Save dialogs start in a `Scores` subfolder beside the plugin and create it when needed. The ZIP also contains `rustel.exe` and the upstream CLI.
+3. For portable use, download `Rustel-Windows-x64-Portable.zip` from the run's artifact and extract the whole ZIP to a folder you want to keep. Add that folder to VSTHost's plugin scan paths and rescan. Keep `Rustel.vst3` and `CsoundRuntime` together; Rustel finds Csound there automatically. The in-plugin Load/Save browser uses a `Scores` subfolder beside the plugin and creates it when needed. The ZIP also contains `rustel.exe` and the upstream CLI.
 4. Or extract the complete `Rustel-Windows-x64` artifact and run `install-windows.ps1` from PowerShell after reviewing it. It installs Rustel and Csound 6.18.1 for your Windows user, configures the paths Rustel needs, and preserves any previous install in a backup folder.
 5. Reopen your DAW, rescan VST3 plugins, and load **Rustel** as an instrument on a track.
 
