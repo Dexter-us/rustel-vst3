@@ -115,6 +115,31 @@ jobs:
               !(Test-Path package/licenses/CSOUND-COPYING)) {
             throw "The bundled Csound runtime or its license is missing."
           }
+          $portable = Join-Path $env:RUNNER_TEMP "rustel-portable"
+          New-Item -ItemType Directory -Force $portable | Out-Null
+          Get-ChildItem package -Force |
+            Where-Object { $_.Name -ne "install-windows.ps1" } |
+            Copy-Item -Destination $portable -Recurse
+          Copy-Item PORTABLE-WINDOWS.txt "$portable/README-PORTABLE.txt"
+          Compress-Archive -Path "$portable/*" `
+            -DestinationPath package/Rustel-Windows-x64-Portable.zip
+          $portableTest = Join-Path $env:RUNNER_TEMP "rustel-portable-test"
+          Expand-Archive package/Rustel-Windows-x64-Portable.zip `
+            -DestinationPath $portableTest -Force
+          foreach ($required in @(
+            "Rustel.vst3/Contents/x86_64-win/Rustel.vst3",
+            "rustel.exe",
+            "CsoundRuntime/csound64.dll",
+            "licenses/CSOUND-COPYING",
+            "README-PORTABLE.txt"
+          )) {
+            if (!(Test-Path (Join-Path $portableTest $required))) {
+              throw "Portable ZIP is missing '$required'."
+            }
+          }
+          if (Test-Path (Join-Path $portableTest "install-windows.ps1")) {
+            throw "Portable ZIP must not contain the installer."
+          }
       - name: Install and smoke-test the Windows package
         shell: pwsh
         run: |
