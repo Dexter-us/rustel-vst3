@@ -1,0 +1,38 @@
+Rustel for Windows — portable ZIP
+
+This archive has no installer. Extract it, then copy the complete Rustel.vst3
+folder into a VST3 folder scanned by your DAW. Do not copy only the inner
+Rustel.vst3 binary. For VSTHost, add the folder you copied it into to the
+plugin scan paths, then rescan.
+
+The archive also contains rustel.exe, the full upstream command-line app, and
+Csound 6.18.1. The CLI can be run from this extracted folder in PowerShell:
+
+  .\rustel.exe --help
+
+To enable Csound in the plugin without an installer:
+
+1. Keep the extracted folder in a permanent location.
+2. Open Windows Settings and search for "Edit environment variables for your
+   account".
+3. Add a user variable named RUSTEL_CSOUND_LIBRARY with the value
+   <extracted-folder>\CsoundRuntime\csound64.dll
+4. Add a user variable named OPCODE6DIR64 with the value
+   <extracted-folder>\CsoundRuntime
+5. Edit your user Path and add <extracted-folder>\CsoundRuntime as a new entry.
+6. Restart VSTHost and enable "Allow native Csound" in Rustel.
+
+Replace <extracted-folder> with the actual folder path. If you do not set up
+Csound, the plugin still works with its built-in synths and samples.
+
+The Microsoft Visual C++ 2015–2022 x64 runtime is required for the bundled
+Csound DLLs. If Windows reports a missing VCRUNTIME or MSVCP DLL, install the
+official Microsoft x64 redistributable:
+https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+Csound is off by default. Only enable it for scores you trust; native Csound
+opcodes run with the same permissions as your DAW. This bundle supports
+Csound 6.18.1 x64, not Csound 7.
+
+See README.md, THIRD_PARTY_NOTICES.md, and licenses/ for project and third-party
+licenses. Rustel is an independent project, not an official Rustel release.
