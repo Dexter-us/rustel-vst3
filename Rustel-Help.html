@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="User guide for the Dexter U.S. Rustel VST3 instrument for Windows.">
+  <title>Rustel VST3 — Help</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #101318;
+      --panel: #171c23;
+      --panel-strong: #1d242d;
+      --line: #303a46;
+      --text: #edf2f8;
+      --muted: #aab6c5;
+      --accent: #75d6c2;
+      --accent-strong: #a5f0df;
+      --warning: #f2cb82;
+      --code: #0c1015;
+      --width: 1160px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 12% 0%, rgb(44 91 89 / 22%), transparent 36rem),
+        var(--page);
+      color: var(--text);
+      font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    a { color: var(--accent-strong); text-underline-offset: 3px; }
+    a:hover { color: #fff; }
+    code, pre { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+    code {
+      color: #c2f4e8;
+      font-size: .92em;
+      overflow-wrap: anywhere;
+    }
+    .shell { width: min(var(--width), calc(100% - 40px)); margin: 0 auto; }
+    .hero { padding: 58px 0 36px; }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 750;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3 { line-height: 1.2; }
+    h1 { max-width: 780px; margin: 0; font-size: clamp(2.3rem, 6vw, 4.7rem); letter-spacing: -.055em; }
+    .lead { max-width: 760px; margin: 18px 0 0; color: var(--muted); font-size: 1.15rem; }
+    .badges { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
+    .badge {
+      padding: 5px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgb(23 28 35 / 75%);
+      color: var(--muted);
+      font-size: .82rem;
+    }
+    .notice {
+      margin: 24px 0 0;
+      padding: 14px 16px;
+      border: 1px solid rgb(242 203 130 / 35%);
+      border-left: 3px solid var(--warning);
+      border-radius: 8px;
+      background: rgb(242 203 130 / 7%);
+      color: #e8d9b8;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 225px minmax(0, 1fr);
+      gap: 34px;
+      align-items: start;
+      padding: 20px 0 72px;
+    }
+    nav {
+      position: sticky;
+      top: 22px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgb(23 28 35 / 88%);
+    }
+    nav strong { display: block; margin-bottom: 10px; font-size: .84rem; }
+    nav ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+    nav a {
+      display: block;
+      padding: 5px 0;
+      color: var(--muted);
+      font-size: .88rem;
+      text-decoration: none;
+    }
+    nav a:hover { color: var(--accent-strong); }
+    main { min-width: 0; }
+    section {
+      margin: 0 0 18px;
+      padding: clamp(20px, 3.5vw, 34px);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(145deg, rgb(29 36 45 / 90%), rgb(23 28 35 / 94%));
+    }
+    section h2 { margin: 0 0 16px; font-size: 1.55rem; letter-spacing: -.025em; }
+    h3 { margin: 25px 0 8px; font-size: 1.08rem; }
+    p { margin: 10px 0; color: #d4dce6; }
+    ul, ol { padding-left: 1.25rem; color: #d4dce6; }
+    li { margin: 6px 0; }
+    .steps { counter-reset: steps; padding: 0; list-style: none; }
+    .steps li { position: relative; min-height: 34px; padding-left: 43px; }
+    .steps li::before {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid rgb(117 214 194 / 40%);
+      border-radius: 50%;
+      color: var(--accent-strong);
+      content: counter(list-item);
+      font-size: .84rem;
+      font-weight: 700;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 16px 0;
+      padding: 18px;
+      border: 1px solid #2a333e;
+      border-radius: 9px;
+      background: var(--code);
+      color: #d7e7e4;
+      font-size: .88rem;
+      line-height: 1.6;
+      tab-size: 2;
+    }
+    pre code { color: inherit; overflow-wrap: normal; }
+    .table-wrap { overflow-x: auto; margin: 16px 0; }
+    table { width: 100%; border-collapse: collapse; min-width: 520px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--accent-strong); font-size: .85rem; }
+    td { color: #d4dce6; }
+    .callout {
+      margin: 16px 0;
+      padding: 14px 16px;
+      border: 1px solid rgb(117 214 194 / 28%);
+      border-radius: 9px;
+      background: rgb(117 214 194 / 6%);
+    }
+    .callout p:first-child { margin-top: 0; }
+    .callout p:last-child { margin-bottom: 0; }
+    .links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+    .link-button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 42px;
+      padding: 9px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-strong);
+      font-weight: 650;
+      text-decoration: none;
+    }
+    footer { padding: 0 0 36px; color: var(--muted); font-size: .84rem; }
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 24px, var(--width)); }
+      .hero { padding-top: 38px; }
+      .layout { grid-template-columns: 1fr; gap: 16px; padding-top: 8px; }
+      nav { position: static; }
+      nav ul { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
+    }
+    @media print {
+      :root { color-scheme: light; --page: #fff; --panel: #fff; --line: #cbd2da; --text: #17202a; --muted: #45515e; }
+      body { background: #fff; color: #17202a; }
+      .shell { width: 100%; }
+      nav { position: static; }
+      section { break-inside: avoid; background: #fff; }
+      .layout { grid-template-columns: 1fr; }
+      a { color: #075b52; }
+      pre { white-space: pre-wrap; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero shell">
+    <p class="eyebrow">Dexter U.S. · Windows VST3</p>
+    <h1>Rustel Help</h1>
+    <p class="lead">A practical guide to installing the portable instrument, writing and evaluating patterns, saving scores, and using Csound.</p>
+    <div class="badges" aria-label="Product details">
+      <span class="badge">Windows x64</span>
+      <span class="badge">VST3 instrument</span>
+      <span class="badge">Manufacturer: Dexter U.S.</span>
+      <span class="badge">Csound 6.18.1 bundled</span>
+    </div>
+    <p class="notice"><strong>Prototype notice:</strong> This is a development build, not a stable release or a DAW-certified product. Test it in your host before relying on it in a session.</p>
+  </header>
+
+  <div class="shell layout">
+    <nav aria-label="Help sections">
+      <strong>On this page</strong>
+      <ul>
+        <li><a href="#install">Install and open</a></li>
+        <li><a href="#editor">Use the editor</a></li>
+        <li><a href="#patterns">Strudel language</a></li>
+        <li><a href="#kabelsalat">KabelSalat graphs</a></li>
+        <li><a href="#files">Load and save</a></li>
+        <li><a href="#csound">Use Csound</a></li>
+        <li><a href="#pfields">Csound event fields</a></li>
+        <li><a href="#cli">Command line app</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#limits">Current limitations</a></li>
+        <li><a href="#about">About Dexter U.S.</a></li>
+      </ul>
+    </nav>
+
+    <main>
+      <section id="install">
+        <h2>Install and open</h2>
+        <p>The portable download needs no installer and does not change Windows settings. Keep the extracted folder together so the plugin can find its bundled Csound files.</p>
+        <ol class="steps">
+          <li>Download <strong>Rustel-Windows-x64-Portable.zip</strong> from a successful Windows build and extract the entire ZIP to a folder you want to keep.</li>
+          <li>Keep <code>Rustel.vst3</code> and <code>CsoundRuntime</code> in the same extracted folder. The ZIP also includes <code>rustel.exe</code> and licenses.</li>
+          <li>Add the extracted folder to VSTHost’s plugin scan paths, rescan, then load <strong>Rustel</strong> as an instrument.</li>
+          <li>Start DAW playback. Wait for the editor status to say <strong>Ready</strong>, then press <strong>Evaluate</strong> to apply the score.</li>
+        </ol>
+        <div class="callout">
+          <p><strong>Installer option:</strong> The full build artifact also includes <code>install-windows.ps1</code>. It installs the plugin and Csound for the current Windows user. Review the script before running it, and restart the DAW afterward.</p>
+          <p>Build artifacts are temporary development downloads and expire after 14 days. They are not stable releases.</p>
+        </div>
+      </section>
+
+      <section id="editor">
+        <h2>Use the editor</h2>
+        <ul>
+          <li><strong>Evaluate</strong> or press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to compile and apply the current score.</li>
+          <li>Loading an example or editing text changes the draft; it does not replace the sound until you evaluate it.</li>
+          <li>If an edit has an error, Rustel keeps the last accepted phrase playing.</li>
+          <li>By default, playback follows the DAW transport, tempo, position, and loop jumps. Turn off <strong>Follow DAW</strong> for a free-running preview when the host continues processing audio while stopped.</li>
+          <li>Output gain starts at −6 dB. It is not a brick-wall limiter; keep monitoring volume low while testing new scores.</li>
+        </ul>
+        <p>The phrase length controls how many cycles Rustel prepares before repeating them. Choose a cycle count that fits your pattern: a three-part progression such as <code>&lt;c e g&gt;</code> needs a phrase length divisible by three to repeat at the same point in the progression.</p>
+      </section>
+
+      <section id="patterns">
+        <h2>Strudel language basics</h2>
+        <p>Strudel is a live-coding language for describing musical patterns. You write JavaScript expressions and use mini-notation inside strings to describe notes and rhythms. Rustel evaluates the score, prepares a fixed-length phrase, and repeats it in time with the DAW.</p>
+        <h3>Mini-notation: notes, rests, and rhythm</h3>
+        <p>Space-separated events share one cycle, so adding events divides that cycle into smaller parts. Use <code>~</code> for a rest, square brackets to group and subdivide events, and <code>*</code> to repeat a pattern faster.</p>
+        <pre><code>note("c4 ~ [eb4 g4] c5*2")</code></pre>
+        <p>Angle brackets choose one item per cycle. For example, <code>note("&lt;c3 eb3 g3&gt;")</code> moves through those pitches on successive cycles. Because this plugin repeats a prepared phrase, set the phrase length so the sequence lands where you expect at the repeat boundary.</p>
+        <h3>Combine and change patterns</h3>
+        <p><code>stack()</code> plays patterns together. Pattern methods can change timing or sound controls; for example, <code>.slow(2)</code> stretches a pattern across two cycles and <code>.gain(0.3)</code> lowers its level.</p>
+        <pre><code>stack(
+  s("bd*4").gain(0.6),
+  note("c2 ~ [eb2 g1]").s("sine").slow(2).gain(0.3)
+)</code></pre>
+        <p>Use the Examples list in the editor to load a starting point, then press <strong>Evaluate</strong>. Rustel supports a native subset of the wider Strudel ecosystem; browser-only features and external services may not work in this plugin. Patterns and random choices repeat with the prepared phrase rather than evolving indefinitely.</p>
+        <p>For more examples, see the <a href="https://strudel.cc/learn/mini-notation/" target="_blank" rel="noopener noreferrer">Strudel mini-notation guide</a> and the <a href="https://github.com/tzfm/rustel/blob/c60f974b4bc4f3e1fbb79d7982089aa15451b6fe/docs/compatibility.md" target="_blank" rel="noopener noreferrer">compatibility notes for the Rustel version used by this plugin</a>.</p>
+      </section>
+
+      <section id="kabelsalat">
+        <h2>KabelSalat audio graphs</h2>
+        <p>The Rustel engine bundled with this plugin includes a native implementation of KabelSalat graph-building functions. A graph describes how oscillators, envelopes, filters, and other signal operations connect to make or process sound. In this plugin, you write the graph in the score; there is <strong>no visual node-patching editor</strong>.</p>
+        <p>Use <code>K(...)</code> to build a graph, and end an audible output path with <code>.out()</code>:</p>
+        <pre><code>$: K(sine(sFreq).mul(0.2).out())
+  .note("c3 e3 g3 b3")</code></pre>
+        <p>Here, <code>sine</code> makes a tone, <code>sFreq</code> is the current note frequency, <code>.mul(0.2)</code> lowers the signal level, and <code>.out()</code> sends it to the graph output. Graphs can also use sources such as <code>saw</code> and <code>noise</code>, envelopes such as <code>adsr</code>, and processors such as filters, delay, and distortion.</p>
+        <p>A graph can also process audio from an earlier stage in a Rustel pattern:</p>
+        <pre><code>$: s("sawtooth").note("c2 e2 g2 b2")
+  .FX(K(audioin().distort(0.4).mul(0.3).out()))</code></pre>
+        <p>Here, <code>audioin()</code> reads the Rustel synth signal entering that graph effect. It is <strong>not</strong> a connection to the DAW track feeding this instrument. This VST still has no live external audio input.</p>
+        <div class="callout">
+          <p><strong>Native limits:</strong> Some KabelSalat features that expect external MIDI, control-change, or mouse input have no input source in the native engine. The <code>scope</code> helper passes audio through but does not open a visual scope. Graphs are code-based and subject to Rustel’s graph and resource limits.</p>
+        </div>
+        <p>See the <a href="https://github.com/tzfm/rustel/blob/c60f974b4bc4f3e1fbb79d7982089aa15451b6fe/docs/kabelsalat.md" target="_blank" rel="noopener noreferrer">KabelSalat graph guide for the pinned Rustel engine</a> for graph inputs, nodes, examples, and limits. KabelSalat is an adaptation of the <a href="https://codeberg.org/froos/kabelsalat" target="_blank" rel="noopener noreferrer">KabelSalat project</a>.</p>
+      </section>
+
+      <section id="files">
+        <h2>Load and save scores</h2>
+        <p>The plugin’s Load and Save controls use the portable <code>Scores</code> folder beside the plugin bundle. Rustel creates that folder when needed. This keeps score files with the extracted portable copy instead of requiring a fixed Windows user folder.</p>
+        <ul>
+          <li>Use <strong>Load</strong> to choose a <code>.strudel</code> or <code>.txt</code> score.</li>
+          <li>Use <strong>Save</strong> to store the current editor text in that folder.</li>
+          <li>Keep the folder with the plugin when moving the portable setup to another location.</li>
+        </ul>
+        <p>DAW project state also stores the score draft, last accepted score, phrase settings, gain, transport options, and window state.</p>
+      </section>
+
+      <section id="csound">
+        <h2>Use Csound</h2>
+        <p>The Windows package includes the double-precision Csound 6.18.1 runtime and standard opcode DLLs. Csound is off by default.</p>
+        <ol>
+          <li>In the plugin, turn on <strong>Allow native Csound</strong>.</li>
+          <li>Choose the <strong>Csound triangle</strong> example, or define an orchestra with <code>loadCSound</code>.</li>
+          <li>Press <strong>Evaluate</strong>, then start or resume DAW playback.</li>
+        </ol>
+        <pre><code>note("c3 eb3 g3 bb3")
+  .csound("triangle")
+  .gain(0.4)
+  .slow(2)</code></pre>
+        <p>Use <code>.csound("name")</code> when the orchestra expects frequency in <code>p4</code>; use <code>.csoundm("name")</code> when it expects a fractional MIDI note number and velocity-style level.</p>
+        <h3>Load a trusted orchestra file</h3>
+        <p>Enter the full path to a trusted folder in <strong>Trusted .orc folder</strong>, then load a file from that folder in the score:</p>
+        <pre><code>await loadOrc("local:voice.orc")</code></pre>
+        <p>Only load Csound scores and orchestra files you trust. Native opcodes can access files and run processes with the same permissions as the DAW. The trusted-folder setting limits where Rustel reads the orchestra text; it cannot limit what compiled orchestra code can do.</p>
+        <p>Csound phrases are prepared off the audio callback and repeat at the chosen tempo. This plugin is an instrument: it does not accept live audio from another DAW track as an effect input.</p>
+      </section>
+
+      <section id="pfields">
+        <h2>Csound event fields</h2>
+        <p>Rustel schedules a Csound instrument event for each note. The <code>p</code> values are Csound event fields, not standalone plugin controls.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>What Rustel sends</th></tr></thead>
+            <tbody>
+              <tr><td><code>p1</code></td><td>Instrument name or number selected with <code>.csound()</code> or <code>.csoundm()</code>.</td></tr>
+              <tr><td><code>p2</code></td><td>Event start time.</td></tr>
+              <tr><td><code>p3</code></td><td>Event duration in seconds.</td></tr>
+              <tr><td><code>p4</code></td><td>Resolved frequency for <code>.csound()</code>, or fractional MIDI note number for <code>.csoundm()</code>.</td></tr>
+              <tr><td><code>p5</code></td><td>Gain for <code>.csound()</code>; gain × velocity × 127 for <code>.csoundm()</code>.</td></tr>
+              <tr><td><code>p6</code></td><td>Named event-control map, including custom controls.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Custom controls can carry different values on different note events. This example adds a <code>brightness</code> control to the event map and reads it in the orchestra:</p>
+        <pre><code>loadCSound`
+instr glass
+  iBrightness = strtod(keymap("brightness", strget(p6)))
+  aEnvelope linseg 0, .005, 1, max(p3 - .01, .001), 0
+  aBody poscil p5, p4
+  aPartial poscil p5 * iBrightness, p4 * 2.01
+  aOut = (aBody + aPartial) * aEnvelope * .5
+  outs aOut, aOut
+endin
+`
+
+register('brightness', (amount, pattern) =>
+  pattern.fmap(value => ({ ...value, brightness: amount })))
+
+note("c4 eb4 g4 bb4")
+  .csound("glass")
+  .brightness("0.1 0.3 0.6 0.9")
+  .gain(0.5)</code></pre>
+        <p>Here each successive note gets a different brightness value. Custom values are event-level controls, not continuous live audio input. Rustel packs their names and values into <code>p6</code>; it does not send them as separate <code>p7</code>, <code>p8</code>, and later fields.</p>
+      </section>
+
+      <section id="cli">
+        <h2>Command-line app</h2>
+        <p>The Windows package also includes <code>rustel.exe</code>, the upstream Rustel command-line application. It is a separate program; its commands and features do not automatically appear in the VST3 editor.</p>
+        <p>Open PowerShell in the extracted package folder:</p>
+        <pre><code>.\rustel.exe --help
+.\rustel.exe play song.strudel
+.\rustel.exe export song.strudel -o take.wav --duration 30s</code></pre>
+        <p>See the <a href="https://github.com/tzfm/rustel/blob/main/docs/cli.md" target="_blank" rel="noopener noreferrer">upstream Rustel CLI guide</a> for its full command list.</p>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <h3>No sound</h3>
+        <ul>
+          <li>Confirm the DAW is playing and the score status says <strong>Ready</strong>.</li>
+          <li>Press <strong>Evaluate</strong> after changing the score.</li>
+          <li>Check the track and plugin output level. Try the built-in synth example before enabling Csound.</li>
+          <li>If the score uses Csound, enable <strong>Allow native Csound</strong> and keep <code>CsoundRuntime</code> beside <code>Rustel.vst3</code> in portable mode.</li>
+        </ul>
+        <h3>Csound score does not compile</h3>
+        <ul>
+          <li>Check the instrument name in <code>.csound("name")</code> against an <code>instr</code> defined in the loaded orchestra.</li>
+          <li>Check that the needed Csound opcodes are included with the bundled runtime.</li>
+          <li>Try the built-in Csound example to confirm Csound is enabled and available.</li>
+        </ul>
+        <h3>Score does not repeat as expected</h3>
+        <p>Rustel prepares a bounded phrase and repeats it. Set the phrase length to a multiple of the pattern’s progression length when you need the same alignment at every repeat boundary.</p>
+      </section>
+
+      <section id="limits">
+        <h2>Current limitations</h2>
+        <ul>
+          <li>This is an instrument, not a DAW audio-input effect. KabelSalat can process Rustel’s internal graph signal, but the plugin does not receive live audio from another track. There is no nested VST, MIDI output, external hardware, or external sample library.</li>
+          <li>The package supports Csound 6.18 or later in the 6.x series. Csound 7 and 32-bit hosts are not supported.</li>
+          <li>Phrases are prepared and repeated; patterns do not evolve indefinitely. Random choices repeat with the prepared phrase.</li>
+          <li>Seeking and loop jumps reset sounding voices; sustained notes that began before the new position are not reconstructed.</li>
+          <li>This development build has not completed plugin-validator or Windows DAW certification. Test scanning, editor open/close, state reload, tempo changes, seeking, and export in your host.</li>
+        </ul>
+      </section>
+
+      <section id="about">
+        <h2>About Dexter U.S.</h2>
+        <p>Dexter U.S. is the manufacturer of this Rustel VST3 project. Dexter U.S. music is available on more than 150 platforms worldwide.</p>
+        <div class="links">
+          <a class="link-button" href="https://github.com/Dexter-us/rustel-vst3" target="_blank" rel="noopener noreferrer">Rustel VST3 on GitHub</a>
+          <a class="link-button" href="https://www.patreon.com/c/Dexerus" target="_blank" rel="noopener noreferrer">Support on Patreon</a>
+          <a class="link-button" href="https://github.com/tzfm/rustel" target="_blank" rel="noopener noreferrer">Upstream Rustel project</a>
+        </div>
+        <p>Rustel VST3 is an independent project built on upstream Rustel. Upstream project names, software, and licenses remain credited in the source package.</p>
+      </section>
+    </main>
+  </div>
+
+  <footer class="shell">
+    <p>Rustel VST3 · Dexter U.S. · Windows x64 · For the latest source and build information, visit the <a href="https://github.com/Dexter-us/rustel-vst3" target="_blank" rel="noopener noreferrer">GitHub repository</a>.</p>
+  </footer>
+</body>
+</html>
