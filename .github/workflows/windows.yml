@@ -88,7 +88,7 @@ jobs:
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item -Recurse target/bundled/Rustel.vst3 package/
           Copy-Item rustel-cli-source/target/release/rustel.exe package/
-          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, rustel-cli-revision.txt package/
+          Copy-Item README.md, Rustel-Help.html, LICENSE, THIRD_PARTY_NOTICES.md, rustel-cli-revision.txt package/
           Copy-Item -Recurse licenses package/
           Copy-Item scripts/install-windows.ps1 package/
           Copy-Item rustel-cli-source/LICENSE package/licenses/RUSTEL-CLI-LICENSE
@@ -109,6 +109,9 @@ jobs:
           }
           if (!(Test-Path package/Rustel-CLI-Source.zip)) {
             throw "The Rustel CLI source archive is missing."
+          }
+          if (!(Test-Path package/Rustel-Help.html)) {
+            throw "The Rustel HTML help file is missing."
           }
           if (!(Test-Path package/CsoundRuntime/csound64.dll) -or
               !(Test-Path package/CsoundRuntime/stdutil.dll) -or
@@ -131,7 +134,8 @@ jobs:
             "rustel.exe",
             "CsoundRuntime/csound64.dll",
             "licenses/CSOUND-COPYING",
-            "README-PORTABLE.txt"
+            "README-PORTABLE.txt",
+            "Rustel-Help.html"
           )) {
             if (!(Test-Path (Join-Path $portableTest $required))) {
               throw "Portable ZIP is missing '$required'."
