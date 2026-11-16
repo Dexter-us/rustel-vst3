@@ -166,7 +166,7 @@ jobs:
       - name: Install and smoke-test the Windows package
         shell: pwsh
         run: |
-          ./scripts/install-windows.ps1 -Bundle "$PWD/package/Rustel.vst3" `
+          ./package/install-windows.ps1 -Bundle "$PWD/package/Rustel.vst3" `
             -CsoundRuntime "$PWD/package/CsoundRuntime" `
             -Destination "$env:RUNNER_TEMP/rustel-vst3-test" `
             -CsoundDestination "$env:RUNNER_TEMP/rustel-csound-test"
