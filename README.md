@@ -67,7 +67,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo xtask bundle rustel-vst3 --release --locked
+cargo build --package rustel-vst3@0.1.0 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.0.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.0 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
