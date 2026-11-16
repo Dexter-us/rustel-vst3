@@ -1,0 +1,20 @@
+[workspace]
+
+[package]
+name = "rustel-vst3"
+version = "0.1.6"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/tzfm/rustel"
+publish = false
+description = "VST3 plugin host: finds, loads and runs plugins as orbit inserts"
+
+[dependencies]
+rustel-audio = { git = "https://github.com/tzfm/rustel.git", rev = "c60f974b4bc4f3e1fbb79d7982089aa15451b6fe" }
+# Rust bindings for the VST3 interfaces. They need no SDK at build time.
+vst3 = "0.3.0"
+libloading = "0.8"
+# The scan cache file and the answer of a scan process.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8.2.0"

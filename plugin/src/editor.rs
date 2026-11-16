@@ -83,7 +83,8 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         ui.colored_label(Color32::YELLOW, format!("{refused} notes exceeded capacity"));
                     }
                 });
-                ui.small("Prototype · Built-in synths + bd only · No room/reverb, external samples, MIDI out, or nested plugins");
+                ui.small("VST3 instruments and effects are hosted by Rustel and rendered into the repeating phrase.");
+                ui.small("DAW MIDI uses the score's first oscillator sound, or sine by default.");
                 ui.add_space(6.0);
             });
             egui::SidePanel::right("controls")
@@ -120,6 +121,28 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     ui.label("Quarter-note beats per cycle");
                     ui.add(widgets::ParamSlider::for_param(&params.beats_per_cycle, setter));
                     ui.small("The score is evaluated across this phrase, then repeats. Longer evolving patterns need a longer phrase.");
+                    ui.separator();
+                    ui.heading("VST3 plugins");
+                    ui.label("Additional VST3 folders (optional)");
+                    let mut vst3_folders = params.vst3_folders.lock().clone();
+                    if ui
+                        .add(
+                            TextEdit::singleline(&mut vst3_folders)
+                                .hint_text("Folder path; multiple paths use the OS separator"),
+                        )
+                        .changed()
+                    {
+                        *params.vst3_folders.lock() = vst3_folders;
+                        mark_dirty(setter, &params);
+                    }
+                    if ui.button("Scan VST3 plugins").clicked() {
+                        shared.scan_vst_plugins.store(true, Ordering::Release);
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            ui.monospace(shared.vst_plugins.lock().as_str());
+                        });
                     ui.separator();
                     ui.label("Examples");
                     for (name, source) in [

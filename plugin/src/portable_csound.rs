@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(any(windows, test))]
-fn package_directory_for_module(module_file: &Path) -> Option<PathBuf> {
+pub(crate) fn package_directory_for_module(module_file: &Path) -> Option<PathBuf> {
     let architecture_directory = module_file.parent()?;
     let contents_directory = architecture_directory.parent()?;
     let bundle_directory = contents_directory.parent()?;
@@ -35,6 +35,12 @@ pub fn configure() {
         let Some(package_directory) = package_directory_for_module(&module_file) else {
             return;
         };
+        if std::env::var_os("RUSTEL_CONFIG_DIR").is_none() {
+            set_process_variable(
+                "RUSTEL_CONFIG_DIR",
+                package_directory.join("RustelData").as_os_str(),
+            );
+        }
         let runtime_directory = package_directory.join("CsoundRuntime");
         let library = runtime_directory.join("csound64.dll");
         if !library.is_file() || !runtime_directory.join("stdutil.dll").is_file() {
@@ -67,7 +73,7 @@ pub fn configure() {
 pub fn configure() {}
 
 #[cfg(windows)]
-fn current_module_file() -> Option<PathBuf> {
+pub(crate) fn current_module_file() -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
 
     const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 0x0000_0004;

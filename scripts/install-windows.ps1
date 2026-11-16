@@ -11,6 +11,9 @@ $ErrorActionPreference = "Stop"
 if (!(Test-Path -LiteralPath (Join-Path $Bundle "Contents\x86_64-win\Rustel.vst3"))) {
     throw "No Windows x64 Rustel.vst3 bundle was found at '$Bundle'."
 }
+if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot "RustelVstWorker.exe"))) {
+    throw "The Rustel VST3 scan helper is missing beside this installer."
+}
 foreach ($required in @("csound64.dll", "stdutil.dll")) {
     if (!(Test-Path -LiteralPath (Join-Path $CsoundRuntime $required))) {
         throw "The bundled Csound runtime is missing '$required' at '$CsoundRuntime'."
@@ -52,12 +55,46 @@ function Install-FolderWithBackup {
     }
 }
 
+function Install-FileWithBackup {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $parent = Split-Path -Parent $Target
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $backup = $null
+    if (Test-Path -LiteralPath $Target) {
+        $backup = "$Target.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Move-Item -LiteralPath $Target -Destination $backup
+    }
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Target -Force
+    } catch {
+        if (Test-Path -LiteralPath $Target) {
+            Remove-Item -LiteralPath $Target -Force
+        }
+        if ($backup -and (Test-Path -LiteralPath $backup)) {
+            Move-Item -LiteralPath $backup -Destination $Target
+        }
+        throw
+    }
+    if ($backup) {
+        Write-Output "Previous helper was preserved at $backup"
+    }
+}
+
 $vstTarget = Join-Path $Destination "Rustel.vst3"
+$workerSource = Join-Path $PSScriptRoot "RustelVstWorker.exe"
+$workerTarget = Join-Path $Destination "RustelVstWorker.exe"
 if ($PSCmdlet.ShouldProcess($CsoundDestination, "Install bundled Csound 6.18.1")) {
     Install-FolderWithBackup -Source $CsoundRuntime -Target $CsoundDestination
 }
 if ($PSCmdlet.ShouldProcess($vstTarget, "Install Rustel VST3 for the current Windows user")) {
     Install-FolderWithBackup -Source $Bundle -Target $vstTarget
+}
+if ($PSCmdlet.ShouldProcess($workerTarget, "Install Rustel VST3 scan helper")) {
+    Install-FileWithBackup -Source $workerSource -Target $workerTarget
 }
 
 if ($PSCmdlet.ShouldProcess("Current-user environment", "Configure Rustel to use bundled Csound")) {

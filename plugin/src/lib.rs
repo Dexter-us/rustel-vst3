@@ -4,6 +4,7 @@ mod editor;
 mod engine;
 mod params;
 mod portable_csound;
+mod portable_vst;
 mod score_files;
 
 use nih_plug::prelude::*;
@@ -38,6 +39,7 @@ impl Plugin for RustelPlugin {
         main_output_channels: NonZeroU32::new(2),
         ..AudioIOLayout::const_default()
     }];
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
     type SysExMessage = ();
     type BackgroundTask = ();
@@ -70,7 +72,57 @@ impl Plugin for RustelPlugin {
         _: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        self.engine.process(buffer, context.transport());
+        let transport = engine::HostTransport {
+            playing: context.transport().playing,
+            tempo: context.transport().tempo,
+            position_beats: context.transport().pos_beats(),
+        };
+        let mut next_midi_event = || loop {
+            let event = context.next_event()?;
+            match event {
+                NoteEvent::NoteOn {
+                    timing,
+                    channel,
+                    note,
+                    velocity,
+                    ..
+                } if velocity.is_finite() && velocity > 0.0 => {
+                    return Some(engine::MidiInputEvent::NoteOn {
+                        timing,
+                        channel,
+                        note,
+                        velocity,
+                    });
+                }
+                NoteEvent::NoteOn {
+                    timing,
+                    channel,
+                    note,
+                    ..
+                }
+                | NoteEvent::NoteOff {
+                    timing,
+                    channel,
+                    note,
+                    ..
+                }
+                | NoteEvent::Choke {
+                    timing,
+                    channel,
+                    note,
+                    ..
+                } => {
+                    return Some(engine::MidiInputEvent::NoteOff {
+                        timing,
+                        channel,
+                        note,
+                    });
+                }
+                _ => {}
+            }
+        };
+        self.engine
+            .process(buffer, &transport, &mut next_midi_event);
         ProcessStatus::Normal
     }
 }
@@ -90,5 +142,6 @@ mod metadata_tests {
     #[test]
     fn reports_requested_manufacturer() {
         assert_eq!(RustelPlugin::VENDOR, "Dexter U.S.");
+        assert_eq!(RustelPlugin::MIDI_INPUT, MidiConfig::Basic);
     }
 }

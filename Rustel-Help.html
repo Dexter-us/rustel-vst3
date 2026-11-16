@@ -275,15 +275,29 @@
   .vsti("Your instrument")
   .vst("Your effect", { depth: 0.5 })</code></pre>
         <h3>Route MIDI from a hosted VST3</h3>
-        <p>Some VST3 generators and processors emit MIDI note events. Rustel captures their note-on, note-off, and velocity output during phrase rendering. By default, the notes play through Rustel’s built-in sine synth:</p>
+        <p>Some VST3 generators and processors emit MIDI note events. Rustel captures their note-on, note-off, and velocity output during phrase rendering. By default, generated notes play through Rustel’s sine synth:</p>
         <pre><code>note("c4 ~ e4").vsti("MIDI generator")</code></pre>
-        <p>To send those notes into another VST3 instrument hosted by Rustel, add a comment directive and replace the name with the target plugin:</p>
+        <p>Choose a different built-in Rustel sound with a target directive:</p>
+        <pre><code>// MIDI target: rustel "supersaw"
+note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <p>Built-in targets are <code>sine</code>, <code>triangle</code>, <code>square</code>, <code>sawtooth</code>, <code>supersaw</code>, <code>pulse</code>, <code>sbd</code>, <code>white</code>, <code>pink</code>, <code>brown</code>, <code>crackle</code>, <code>bytebeat</code>, <code>zzfx</code>, and <code>one</code>. Hosted MIDI can also target Rustel sample sounds, wavetables, and KabelSalat graphs:</p>
+        <pre><code>// MIDI target: sample "bd"
+note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <pre><code>// MIDI target: wavetable "wt_x"
+note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <pre><code>// MIDI target: graph sine(sFreq).mul(0.2).out()
+note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <p>Use a sound name available to Rustel for the sample or wavetable; uncached library sounds load when you evaluate. The graph line takes a KabelSalat expression, where <code>sFreq</code> and <code>sGate</code> are available; send its audible branch to <code>.out()</code>. These routes render MIDI pitch, velocity, and note duration into the prepared phrase off the audio callback. MIDI CC, pitch bend, aftertouch, and SysEx are not routed.</p>
+        <p>To send the notes to another hosted instrument, set its plugin name as the target:</p>
         <pre><code>// MIDI target: vsti "Your instrument"
 note("c4 ~ e4").vsti("MIDI generator")</code></pre>
-        <p>For a MIDI processor, use its normal Rustel call—<code>.vsti()</code> if the plugin is an instrument, or <code>.vst()</code> if it is an effect. The phrase is rendered off-thread and repeats. The current route carries notes and velocity only; it does not route MIDI CC, pitch bend, aftertouch, or SysEx.</p>
+        <p>To send notes to an available Csound instrument—including Rustel’s bundled instruments or one you define or load in the score—first enable <strong>Allow native Csound</strong>:</p>
+        <pre><code>// MIDI target: csound "triangle"
+note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <p>The Csound route sends MIDI pitch as fractional MIDI-note <code>p4</code>, velocity as <code>p5</code>, and note-off as the event duration. It supports up to 1,024 generated notes per phrase. The selected phrase is rendered off-thread and repeats. Hosted routing currently carries notes and velocity only; it does not route MIDI CC, pitch bend, aftertouch, or SysEx.</p>
         <p>Rustel hosts VST3, not VST2. Plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> beside the plugin bundle so scanning can run in the helper process.</p>
         <div class="callout">
-          <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Hosted VST3 MIDI output is a separate path and is routed to the built-in synth unless a VSTi target directive is set.</p>
+          <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Hosted VST3 MIDI output is routed through the target directive above.</p>
         </div>
         <p>VST3 scan cache and presets are stored in <code>RustelData</code> beside the portable package, unless the process already has <code>RUSTEL_CONFIG_DIR</code> set. The portable package does not change persistent Windows settings.</p>
       </section>

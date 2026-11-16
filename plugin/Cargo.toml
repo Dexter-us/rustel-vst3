@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 nih_plug.workspace = true
 nih_plug_egui.workspace = true
 rustel-engine.workspace = true
+rustel-runtime.workspace = true
 crossbeam-queue = "0.3"
 parking_lot = "0.12"
 

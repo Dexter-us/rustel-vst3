@@ -20,6 +20,8 @@ pub struct RustelParams {
     pub applied: Arc<Mutex<String>>,
     #[persist = "csound-orchestra-root"]
     pub csound_orchestra_root: Arc<Mutex<String>>,
+    #[persist = "vst3-folders"]
+    pub vst3_folders: Arc<Mutex<String>>,
     #[id = "gain"]
     pub gain: FloatParam,
     #[id = "enabled"]
@@ -44,6 +46,7 @@ impl Default for RustelParams {
             draft: Arc::new(Mutex::new(DEFAULT_SCORE.into())),
             applied: Arc::new(Mutex::new(DEFAULT_SCORE.into())),
             csound_orchestra_root: Arc::new(Mutex::new(String::new())),
+            vst3_folders: Arc::new(Mutex::new(String::new())),
             gain: FloatParam::new(
                 "Output",
                 util::db_to_gain(-6.0),

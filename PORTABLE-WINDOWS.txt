@@ -1,15 +1,18 @@
 Rustel for Windows — portable ZIP
 
-This archive has no installer and does not change Windows settings. Extract the
-whole ZIP to a folder you want to keep. Keep Rustel.vst3 and CsoundRuntime
-together in that folder; Rustel finds its bundled Csound automatically.
+This archive has no installer and does not change persistent Windows settings.
+Extract the whole ZIP to a folder you want to keep. Keep Rustel.vst3,
+RustelVstWorker.exe, and CsoundRuntime together in that folder; Rustel finds
+its bundled Csound and VST3 scan helper automatically. Rustel creates
+RustelData for plugin scan cache and presets the first time it scans plugins.
 Load and Save use an in-plugin browser for a Scores subfolder beside the plugin
 bundle. Rustel creates that folder when needed, so saved scores move with the
 portable files.
 
 In VSTHost, add the extracted folder to the VST3 plugin scan paths and rescan.
-If you prefer the standard VST3 folder, copy both Rustel.vst3 and CsoundRuntime
-there as sibling folders. Do not copy only the inner Rustel.vst3 binary.
+If you prefer the standard VST3 folder, copy Rustel.vst3, RustelVstWorker.exe,
+and CsoundRuntime there as sibling entries. Do not copy only the inner
+Rustel.vst3 binary.
 
 The archive also contains rustel.exe, the full upstream command-line app, and
 Csound 6.18.1. The CLI can be run from the extracted folder in PowerShell:
@@ -18,6 +21,17 @@ Csound 6.18.1. The CLI can be run from the extracted folder in PowerShell:
 
 Csound is off by default. Enable "Allow native Csound" only for scores you
 trust; native Csound opcodes run with the same permissions as your DAW.
+
+The plugin can use third-party x64 VST3 instruments with `.vsti("name")` and
+audio effects with `.vst("name")`. Use the editor's Scan VST3 plugins button
+to list installed plugins. Scan results and presets are kept in RustelData.
+Third-party plugins are not included in this portable package. Plugin scans
+run in the helper process; rendering still runs inside the DAW process.
+
+Rustel also accepts MIDI note input from VSTHost. Route the MIDI output of a
+MIDI-generating plugin or MIDI-outputting VSTi to Rustel. Note velocity and
+note-off are supported; MIDI notes use the active score's first basic
+oscillator waveform, or sine if the score has none.
 
 The Microsoft Visual C++ 2015–2022 x64 runtime may be needed for Csound. If
 Windows reports a missing VCRUNTIME or MSVCP DLL, install Microsoft's official
