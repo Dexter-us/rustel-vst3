@@ -188,7 +188,7 @@
   <header class="hero shell">
     <p class="eyebrow">Dexter U.S. · Windows VST3</p>
     <h1>Rustel Help</h1>
-    <p class="lead">A practical guide to installing the portable instrument, writing and evaluating patterns, saving scores, and using Csound.</p>
+    <p class="lead">A practical guide to installing the portable instrument, writing patterns, hosting VST3 instruments and effects, saving scores, and using Csound.</p>
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
@@ -205,6 +205,8 @@
         <li><a href="#install">Install and open</a></li>
         <li><a href="#editor">Use the editor</a></li>
         <li><a href="#patterns">Strudel language</a></li>
+        <li><a href="#vst3">VST3 instruments and effects</a></li>
+        <li><a href="#midi">MIDI input</a></li>
         <li><a href="#kabelsalat">KabelSalat graphs</a></li>
         <li><a href="#files">Load and save</a></li>
         <li><a href="#csound">Use Csound</a></li>
@@ -222,12 +224,12 @@
         <p>The portable download needs no installer and does not change Windows settings. Keep the extracted folder together so the plugin can find its bundled Csound files.</p>
         <ol class="steps">
           <li>Download <strong>Rustel-Windows-x64-Portable.zip</strong> from a successful Windows build and extract the entire ZIP to a folder you want to keep.</li>
-          <li>Keep <code>Rustel.vst3</code> and <code>CsoundRuntime</code> in the same extracted folder. The ZIP also includes <code>rustel.exe</code> and licenses.</li>
+          <li>Keep <code>Rustel.vst3</code>, <code>RustelVstWorker.exe</code>, and <code>CsoundRuntime</code> in the same extracted folder. The ZIP also includes <code>rustel.exe</code> and licenses.</li>
           <li>Add the extracted folder to VSTHost’s plugin scan paths, rescan, then load <strong>Rustel</strong> as an instrument.</li>
           <li>Start DAW playback. Wait for the editor status to say <strong>Ready</strong>, then press <strong>Evaluate</strong> to apply the score.</li>
         </ol>
         <div class="callout">
-          <p><strong>Installer option:</strong> The full build artifact also includes <code>install-windows.ps1</code>. It installs the plugin and Csound for the current Windows user. Review the script before running it, and restart the DAW afterward.</p>
+          <p><strong>Installer option:</strong> The full build artifact also includes <code>install-windows.ps1</code>. It installs the plugin, VST3 scan helper, and Csound for the current Windows user. Review the script before running it, and restart the DAW afterward.</p>
           <p>Build artifacts are temporary development downloads and expire after 14 days. They are not stable releases.</p>
         </div>
       </section>
@@ -241,7 +243,7 @@
           <li>By default, playback follows the DAW transport, tempo, position, and loop jumps. Turn off <strong>Follow DAW</strong> for a free-running preview when the host continues processing audio while stopped.</li>
           <li>Output gain starts at −6 dB. It is not a brick-wall limiter; keep monitoring volume low while testing new scores.</li>
         </ul>
-        <p>The phrase length controls how many cycles Rustel prepares before repeating them. Choose a cycle count that fits your pattern: a three-part progression such as <code>&lt;c e g&gt;</code> needs a phrase length divisible by three to repeat at the same point in the progression.</p>
+        <p>The phrase length controls how many cycles Rustel prepares before repeating them. Choose a cycle count that fits your pattern: a three-part progression such as <code>&lt;c e g&gt;</code> needs a phrase length divisible by three to repeat at the same point in the progression. Scores that use hosted VST3 plugins are rendered off the audio callback and then repeat as a fixed phrase.</p>
       </section>
 
       <section id="patterns">
@@ -259,6 +261,37 @@
 )</code></pre>
         <p>Use the Examples list in the editor to load a starting point, then press <strong>Evaluate</strong>. Rustel supports a native subset of the wider Strudel ecosystem; browser-only features and external services may not work in this plugin. Patterns and random choices repeat with the prepared phrase rather than evolving indefinitely.</p>
         <p>For more examples, see the <a href="https://strudel.cc/learn/mini-notation/" target="_blank" rel="noopener noreferrer">Strudel mini-notation guide</a> and the <a href="https://github.com/tzfm/rustel/blob/c60f974b4bc4f3e1fbb79d7982089aa15451b6fe/docs/compatibility.md" target="_blank" rel="noopener noreferrer">compatibility notes for the Rustel version used by this plugin</a>.</p>
+      </section>
+
+      <section id="vst3">
+        <h2>VST3 instruments and effects</h2>
+        <p>Rustel can host installed 64-bit VST3 plugins inside its score. Click <strong>Scan VST3 plugins</strong> in the editor to list plugins found in the standard Windows VST3 folders. If a plugin is in a different folder, enter that folder in <strong>Additional VST3 folders</strong>; separate multiple folders with semicolons.</p>
+        <h3>Play a VST3 instrument</h3>
+        <p><code>.vsti("Plugin Name")</code> sends score notes—including pitch, velocity, and note length—to the named instrument:</p>
+        <pre><code>note("c2 e2 g2").vsti("Your instrument")</code></pre>
+        <h3>Process sound through an effect</h3>
+        <p><code>.vst("Plugin Name", { parameter: value })</code> adds an audio effect. The effect name and parameter keys should match a plugin in the scan list:</p>
+        <pre><code>note("c2 e2 g2")
+  .vsti("Your instrument")
+  .vst("Your effect", { depth: 0.5 })</code></pre>
+        <h3>Route MIDI from a hosted VST3</h3>
+        <p>Some VST3 generators and processors emit MIDI note events. Rustel captures their note-on, note-off, and velocity output during phrase rendering. By default, the notes play through Rustel’s built-in sine synth:</p>
+        <pre><code>note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <p>To send those notes into another VST3 instrument hosted by Rustel, add a comment directive and replace the name with the target plugin:</p>
+        <pre><code>// MIDI target: vsti "Your instrument"
+note("c4 ~ e4").vsti("MIDI generator")</code></pre>
+        <p>For a MIDI processor, use its normal Rustel call—<code>.vsti()</code> if the plugin is an instrument, or <code>.vst()</code> if it is an effect. The phrase is rendered off-thread and repeats. The current route carries notes and velocity only; it does not route MIDI CC, pitch bend, aftertouch, or SysEx.</p>
+        <p>Rustel hosts VST3, not VST2. Plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> beside the plugin bundle so scanning can run in the helper process.</p>
+        <div class="callout">
+          <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Hosted VST3 MIDI output is a separate path and is routed to the built-in synth unless a VSTi target directive is set.</p>
+        </div>
+        <p>VST3 scan cache and presets are stored in <code>RustelData</code> beside the portable package, unless the process already has <code>RUSTEL_CONFIG_DIR</code> set. The portable package does not change persistent Windows settings.</p>
+      </section>
+
+      <section id="midi">
+        <h2>MIDI input from VSTHost</h2>
+        <p>Rustel’s VST3 instrument accepts MIDI note-on, note-off, and velocity from the DAW. In VSTHost, connect a MIDI-generating plugin or a VSTi that outputs MIDI to Rustel’s MIDI input. Incoming notes use the waveform and envelope of the first basic oscillator note in the active score; if the score has no basic oscillator notes, Rustel uses sine. The active Strudel score can play at the same time.</p>
+        <p>This is DAW-to-Rustel MIDI input. It is separate from the hosted VST3 MIDI output route in the <a href="#vst3">VST3 section</a>. Pitch bend, MIDI CC, and aftertouch are not mapped yet.</p>
       </section>
 
       <section id="kabelsalat">
@@ -379,7 +412,8 @@ note("c4 eb4 g4 bb4")
       <section id="limits">
         <h2>Current limitations</h2>
         <ul>
-          <li>This is an instrument, not a DAW audio-input effect. KabelSalat can process Rustel’s internal graph signal, but the plugin does not receive live audio from another track. There is no nested VST, MIDI output, external hardware, or external sample library.</li>
+          <li>This is an instrument, not a DAW audio-input effect. KabelSalat can process Rustel’s internal graph signal, but the plugin does not receive live audio from another track. VST2, MIDI output from Rustel to the DAW, external hardware, and external sample libraries are not supported.</li>
+          <li>Hosted VST3 MIDI routing currently supports note-on, note-off, and velocity only. MIDI CC, pitch bend, aftertouch, SysEx, and channel preservation when routing into a hosted VSTi are not supported yet.</li>
           <li>The package supports Csound 6.18 or later in the 6.x series. Csound 7 and 32-bit hosts are not supported.</li>
           <li>Phrases are prepared and repeated; patterns do not evolve indefinitely. Random choices repeat with the prepared phrase.</li>
           <li>Seeking and loop jumps reset sounding voices; sustained notes that began before the new position are not reconstructed.</li>
