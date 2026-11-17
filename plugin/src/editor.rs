@@ -90,6 +90,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
             egui::SidePanel::right("controls")
                 .exact_width(195.0)
                 .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(10.0);
                     ui.heading("Transport");
                     toggle(ui, setter, &params.enabled, "Enabled");
@@ -164,6 +165,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         "Source & build instructions",
                         "https://github.com/Dexter-us/rustel-vst3",
                     );
+                    });
                 });
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.horizontal(|ui| {
