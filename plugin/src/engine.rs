@@ -831,7 +831,7 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
     while !shared.shutdown.load(Ordering::Acquire) {
         while shared.retired.pop().is_some() {}
         if shared.scan_vst_plugins.swap(false, Ordering::AcqRel) {
-            *shared.status.lock() = "Scanning installed VST3 plugins…".into();
+            *shared.status.lock() = "Scanning standard VST3 folders and any added folders…".into();
             let folders = params.vst3_folders.lock().clone();
             match crate::portable_vst::configure(&folders, &shared.shutdown) {
                 Ok(()) => {

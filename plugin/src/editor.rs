@@ -11,6 +11,32 @@ use std::{sync::Arc, sync::atomic::Ordering, time::Duration};
 struct ScoreFileUi {
     message: String,
     dialog: Option<ScoreDialog>,
+    folder_picker: Option<FolderPicker>,
+    csound_editor: Option<CsoundSourceUi>,
+}
+
+struct FolderPicker {
+    directory: Option<std::path::PathBuf>,
+    directories: Vec<std::path::PathBuf>,
+    selected: Option<std::path::PathBuf>,
+    error: Option<String>,
+}
+
+struct CsoundSourceUi {
+    directory: std::path::PathBuf,
+    files: Vec<std::path::PathBuf>,
+    selected: Option<std::path::PathBuf>,
+    filename: String,
+    source: String,
+    message: String,
+    error: Option<String>,
+    confirm_overwrite: bool,
+}
+
+enum CsoundSourceAction {
+    Close,
+    Load(std::path::PathBuf),
+    Save(std::path::PathBuf),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,6 +85,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                             .strong()
                             .color(Color32::from_rgb(199, 167, 244)),
                     );
+                    ui.small(format!("v{}", env!("CARGO_PKG_VERSION")));
                     ui.label("PATTERN INSTRUMENT");
                     ui.separator();
                     let bpm = f64::from_bits(shared.bpm.load(Ordering::Relaxed));
@@ -124,6 +151,12 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     ui.small("The score is evaluated across this phrase, then repeats. Longer evolving patterns need a longer phrase.");
                     ui.separator();
                     ui.heading("VST3 plugins");
+                    ui.small(
+                        "Scans the standard Windows VST3 locations and any folders you add below.",
+                    );
+                    for folder in standard_vst3_folders() {
+                        ui.small(folder.display().to_string());
+                    }
                     ui.label("Additional VST3 folders (optional)");
                     let mut vst3_folders = params.vst3_folders.lock().clone();
                     if ui
@@ -136,6 +169,12 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         *params.vst3_folders.lock() = vst3_folders;
                         mark_dirty(setter, &params);
                     }
+                    if ui.button("Browse for a plugin folder…").clicked() {
+                        start_folder_picker(file_ui);
+                    }
+                    ui.small(
+                        "The bundled RustelVstWorker checks each plugin separately. It should not open a console window.",
+                    );
                     if ui.button("Scan VST3 plugins").clicked() {
                         shared.scan_vst_plugins.store(true, Ordering::Release);
                     }
@@ -185,6 +224,13 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         start_score_dialog(file_ui, ScoreDialogMode::Save);
                     }
                     if ui
+                        .button("Csound files…")
+                        .on_hover_text("Open the separate .orc/.csd source editor")
+                        .clicked()
+                    {
+                        start_csound_editor(file_ui);
+                    }
+                    if ui
                         .button(RichText::new("Evaluate").strong())
                         .on_hover_text("Ctrl+Enter · invalid edits keep the last good phrase")
                         .clicked()
@@ -222,8 +268,412 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                 }
             });
             draw_score_dialog(ctx, file_ui, &params, setter);
+            draw_folder_picker(ctx, file_ui, &params, setter);
+            draw_csound_editor(ctx, file_ui);
         },
     )
+}
+
+fn start_folder_picker(file_ui: &mut ScoreFileUi) {
+    let directory = preferred_vst3_folder();
+    let directories = directory
+        .as_deref()
+        .map(list_child_directories)
+        .unwrap_or_default();
+    file_ui.folder_picker = Some(FolderPicker {
+        directory,
+        directories,
+        selected: None,
+        error: None,
+    });
+}
+
+fn preferred_vst3_folder() -> Option<std::path::PathBuf> {
+    standard_vst3_folders()
+        .into_iter()
+        .find(|path| path.is_dir())
+        .or_else(|| std::env::current_dir().ok())
+}
+
+fn standard_vst3_folders() -> Vec<std::path::PathBuf> {
+    [
+        std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|path| path.join("Programs/Common/VST3")),
+        std::env::var_os("CommonProgramFiles")
+            .map(std::path::PathBuf::from)
+            .map(|path| path.join("VST3")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn list_child_directories(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut directories = entries
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(|kind| kind.is_dir())
+                .map(|_| entry.path())
+        })
+        .collect::<Vec<_>>();
+    directories.sort_by_key(|path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    });
+    directories
+}
+
+fn folder_picker_roots() -> Vec<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        ('C'..='Z')
+            .map(|letter| std::path::PathBuf::from(format!("{letter}:\\")))
+            .filter(|path| path.is_dir())
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        vec![std::path::PathBuf::from("/")]
+    }
+}
+
+fn add_vst3_folder(
+    selected: std::path::PathBuf,
+    file_ui: &mut ScoreFileUi,
+    params: &RustelParams,
+    setter: &ParamSetter,
+) {
+    let mut folders =
+        std::env::split_paths(std::ffi::OsStr::new(params.vst3_folders.lock().as_str()))
+            .filter(|folder| !folder.as_os_str().is_empty())
+            .collect::<Vec<_>>();
+    if !folders.iter().any(|folder| folder == &selected) {
+        folders.push(selected.clone());
+    }
+    match std::env::join_paths(folders) {
+        Ok(joined) => {
+            *params.vst3_folders.lock() = joined.to_string_lossy().into_owned();
+            mark_dirty(setter, params);
+            file_ui.message = format!("Added plugin folder: {}", selected.display());
+            file_ui.folder_picker = None;
+        }
+        Err(error) => {
+            if let Some(picker) = file_ui.folder_picker.as_mut() {
+                picker.error = Some(format!("Could not add that folder: {error}"));
+            }
+        }
+    }
+}
+
+fn draw_folder_picker(
+    ctx: &egui::Context,
+    file_ui: &mut ScoreFileUi,
+    params: &RustelParams,
+    setter: &ParamSetter,
+) {
+    let Some(picker) = file_ui.folder_picker.as_mut() else {
+        return;
+    };
+    let mut open = true;
+    let mut selected_folder = None;
+    let mut close = false;
+    egui::Window::new("Choose a VST3 plugin folder")
+        .id(egui::Id::new("rustel-vst3-folder-picker"))
+        .collapsible(false)
+        .resizable(true)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label("Choose a folder that contains .vst3 plugins.");
+            ui.horizontal(|ui| {
+                if ui.button("Computer / drives").clicked() {
+                    picker.directory = None;
+                    picker.directories.clear();
+                    picker.selected = None;
+                    picker.error = None;
+                }
+                if let Some(parent) = picker
+                    .directory
+                    .as_ref()
+                    .and_then(|directory| directory.parent())
+                    .map(std::path::Path::to_path_buf)
+                {
+                    if ui.button("Up one folder").clicked() {
+                        picker.directory = Some(parent);
+                        picker.directories = picker
+                            .directory
+                            .as_deref()
+                            .map(list_child_directories)
+                            .unwrap_or_default();
+                        picker.selected = None;
+                        picker.error = None;
+                    }
+                }
+            });
+            ui.label(picker.directory.as_deref().map_or_else(
+                || "Choose a drive".into(),
+                |path| path.display().to_string(),
+            ));
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .max_height(260.0)
+                .show(ui, |ui| {
+                    if picker.directory.is_some() {
+                        if picker.directories.is_empty() {
+                            ui.label("No subfolders found here.");
+                        }
+                        for child in picker.directories.clone() {
+                            let name = child.file_name().unwrap_or_default().to_string_lossy();
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(
+                                        picker.selected.as_ref() == Some(&child),
+                                        name.to_string(),
+                                    )
+                                    .clicked()
+                                {
+                                    picker.selected = Some(child.clone());
+                                }
+                                if ui.small_button("Open").clicked() {
+                                    picker.directory = Some(child.clone());
+                                    picker.directories = list_child_directories(&child);
+                                    picker.selected = None;
+                                    picker.error = None;
+                                }
+                            });
+                        }
+                    } else {
+                        for drive in folder_picker_roots() {
+                            let label = drive.display().to_string();
+                            if ui.button(label).clicked() {
+                                picker.directory = Some(drive.clone());
+                                picker.directories = list_child_directories(&drive);
+                                picker.selected = None;
+                                picker.error = None;
+                            }
+                        }
+                    }
+                });
+            if let Some(error) = &picker.error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        picker.directory.is_some(),
+                        egui::Button::new("Use current folder"),
+                    )
+                    .clicked()
+                {
+                    selected_folder = picker.directory.clone();
+                }
+                if ui
+                    .add_enabled(
+                        picker.selected.is_some(),
+                        egui::Button::new("Use selected folder"),
+                    )
+                    .clicked()
+                {
+                    selected_folder = picker.selected.clone();
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+    if !open || close {
+        file_ui.folder_picker = None;
+    } else if let Some(selected) = selected_folder {
+        if selected.is_dir() {
+            add_vst3_folder(selected, file_ui, params, setter);
+        } else if let Some(picker) = file_ui.folder_picker.as_mut() {
+            picker.error = Some("That folder is no longer available.".into());
+        }
+    }
+}
+
+fn start_csound_editor(file_ui: &mut ScoreFileUi) {
+    let directory = match crate::score_files::prepare_scores_directory() {
+        Ok(directory) => directory,
+        Err(error) => {
+            file_ui.message = error;
+            return;
+        }
+    };
+    let files = match crate::score_files::list_csound_files(&directory) {
+        Ok(files) => files,
+        Err(error) => {
+            file_ui.message = error;
+            return;
+        }
+    };
+    file_ui.csound_editor = Some(CsoundSourceUi {
+        directory,
+        files,
+        selected: None,
+        filename: "orchestra.orc".into(),
+        source: String::new(),
+        message: String::new(),
+        error: None,
+        confirm_overwrite: false,
+    });
+}
+
+fn draw_csound_editor(ctx: &egui::Context, file_ui: &mut ScoreFileUi) {
+    let Some(editor) = file_ui.csound_editor.as_mut() else {
+        return;
+    };
+    let files = editor.files.clone();
+    let mut open = true;
+    let mut action = None;
+    egui::Window::new("Csound source files")
+        .id(egui::Id::new("rustel-csound-source-editor"))
+        .collapsible(false)
+        .resizable(true)
+        .default_size(egui::vec2(720.0, 520.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(format!("Portable Scores folder: {}", editor.directory.display()));
+            ui.small(
+                "This separate editor handles .orc and .csd text; it does not replace the Rustel score. To use an .orc, set Trusted .orc folder to this folder, then call await loadOrc(\"local:voice.orc\") in a score.",
+            );
+            ui.small("Save your edits before closing; this source editor is separate from the saved DAW score.");
+            ui.horizontal(|ui| {
+                ui.label("Filename");
+                if ui.text_edit_singleline(&mut editor.filename).changed() {
+                    editor.confirm_overwrite = false;
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        editor.selected.is_some(),
+                        egui::Button::new("Load selected"),
+                    )
+                    .clicked()
+                {
+                    if let Some(path) = editor.selected.clone() {
+                        action = Some(CsoundSourceAction::Load(path));
+                    }
+                }
+                if ui.button(if editor.confirm_overwrite {
+                    "Replace source file"
+                } else {
+                    "Save Csound source"
+                }).clicked() {
+                    match crate::score_files::csound_file_path(
+                        &editor.directory,
+                        &editor.filename,
+                    ) {
+                        Ok(path) if path.exists() && !editor.confirm_overwrite => {
+                            editor.confirm_overwrite = true;
+                        }
+                        Ok(path) => action = Some(CsoundSourceAction::Save(path)),
+                        Err(error) => editor.error = Some(error),
+                    }
+                }
+                if ui.button("Close").clicked() {
+                    action = Some(CsoundSourceAction::Close);
+                }
+            });
+            if !files.is_empty() {
+                ui.label("Csound source files in this folder");
+                egui::ScrollArea::vertical()
+                    .max_height(92.0)
+                    .show(ui, |ui| {
+                        for path in &files {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            if ui
+                                .selectable_label(editor.selected.as_ref() == Some(path), name)
+                                .clicked()
+                            {
+                                editor.selected = Some(path.clone());
+                            }
+                        }
+                    });
+            } else {
+                ui.label("No .orc or .csd source files saved here yet.");
+            }
+            if !editor.message.is_empty() {
+                ui.colored_label(Color32::LIGHT_BLUE, &editor.message);
+            }
+            if let Some(error) = &editor.error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+            }
+            if editor.confirm_overwrite {
+                ui.colored_label(Color32::YELLOW, "That file exists. Select Replace source file to overwrite it.");
+            }
+            ui.separator();
+            ui.add(
+                TextEdit::multiline(&mut editor.source)
+                    .font(FontId::monospace(14.0))
+                    .code_editor()
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(20),
+            );
+        });
+
+    if !open || matches!(action, Some(CsoundSourceAction::Close)) {
+        file_ui.csound_editor = None;
+        return;
+    }
+    match action {
+        Some(CsoundSourceAction::Load(path)) => {
+            match crate::score_files::read_csound_source(&path) {
+                Ok(source) => {
+                    editor.filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    editor.source = source;
+                    editor.message = format!(
+                        "Loaded {} as Csound source text.",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    editor.error = None;
+                    editor.confirm_overwrite = false;
+                }
+                Err(error) => editor.error = Some(error),
+            }
+        }
+        Some(CsoundSourceAction::Save(path)) => {
+            match crate::score_files::write_csound_source(&path, &editor.source) {
+                Ok(()) => {
+                    editor.filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    match crate::score_files::list_csound_files(&editor.directory) {
+                        Ok(files) => editor.files = files,
+                        Err(error) => editor.error = Some(error),
+                    }
+                    editor.selected = Some(path.clone());
+                    editor.message = format!(
+                        "Saved {}.",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    editor.error = None;
+                    editor.confirm_overwrite = false;
+                }
+                Err(error) => {
+                    editor.error = Some(format!("Could not save Csound source: {error}"));
+                    editor.confirm_overwrite = false;
+                }
+            }
+        }
+        Some(CsoundSourceAction::Close) | None => {}
+    }
 }
 
 fn start_score_dialog(file_ui: &mut ScoreFileUi, mode: ScoreDialogMode) {

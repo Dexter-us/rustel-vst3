@@ -34,16 +34,25 @@ jobs:
       - name: Run focused checks
         run: cargo test --workspace --locked -- --test-threads=1
       - name: Build the uniquely selected plugin library
-        run: cargo build --package rustel-vst3@0.1.1 --release --locked
+        run: cargo build --package rustel-vst3@0.1.2 --release --locked
       - name: Prepare the NIH bundler library path
         shell: pwsh
         run: |
           Copy-Item target/release/rustel_vst3.dll `
-            'target/release/rustel_vst3@0.1.1.dll' -Force
+            'target/release/rustel_vst3@0.1.2.dll' -Force
       - name: Build the Windows x64 VST3 bundle
-        run: cargo xtask bundle rustel-vst3@0.1.1 --release --locked
+        run: cargo xtask bundle rustel-vst3@0.1.2 --release --locked
       - name: Build the VST3 scan helper
-        run: cargo build --package rustel-vst3@0.1.1 --bin rustel-vst-worker --release --locked
+        run: cargo build --package rustel-vst3@0.1.2 --bin rustel-vst-worker --release --locked
+      - name: Verify the scan helper does not open a console
+        shell: pwsh
+        run: |
+          $bytes = [IO.File]::ReadAllBytes("target/release/rustel-vst-worker.exe")
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+          if ($subsystem -ne 2) {
+            throw "The VST scan helper must use the Windows GUI subsystem, not open a console."
+          }
       - name: Place the scan helper beside the plugin
         shell: pwsh
         run: |

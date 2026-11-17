@@ -192,6 +192,7 @@
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
+      <span class="badge">Version 0.1.2</span>
       <span class="badge">Manufacturer: Dexter U.S.</span>
       <span class="badge">Csound 6.18.1 bundled</span>
     </div>
@@ -265,7 +266,8 @@
 
       <section id="vst3">
         <h2>VST3 instruments and effects</h2>
-        <p>Rustel can host installed 64-bit VST3 plugins inside its score. Click <strong>Scan VST3 plugins</strong> in the editor to list plugins found in the standard Windows VST3 folders. If a plugin is in a different folder, enter that folder in <strong>Additional VST3 folders</strong>; separate multiple folders with semicolons.</p>
+        <p>Rustel can host installed 64-bit VST3 plugins inside its score. Click <strong>Scan VST3 plugins</strong> in the editor to scan the standard Windows folders shown there: <code>%LOCALAPPDATA%\Programs\Common\VST3</code> and <code>%CommonProgramFiles%\VST3</code>. To include another location, click <strong>Browse for a plugin folder</strong>, choose a folder, then scan. You can also type multiple paths in <strong>Additional VST3 folders</strong>, separated by semicolons.</p>
+        <p>The bundled <code>RustelVstWorker.exe</code> examines each plugin in a separate helper process. It should run without opening a console window. The helper belongs beside <code>Rustel.vst3</code> in the portable package; it is not itself a plugin folder to scan.</p>
         <h3>Play a VST3 instrument</h3>
         <p><code>.vsti("Plugin Name")</code> sends score notes—including pitch, velocity, and note length—to the named instrument:</p>
         <pre><code>note("c2 e2 g2").vsti("Your instrument")</code></pre>
@@ -295,7 +297,7 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <pre><code>// MIDI target: csound "triangle"
 note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <p>The Csound route sends MIDI pitch as fractional MIDI-note <code>p4</code>, velocity as <code>p5</code>, and note-off as the event duration. It supports up to 1,024 generated notes per phrase. The selected phrase is rendered off-thread and repeats. Hosted routing currently carries notes and velocity only; it does not route MIDI CC, pitch bend, aftertouch, or SysEx.</p>
-        <p>Rustel hosts VST3, not VST2. Plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> beside the plugin bundle so scanning can run in the helper process.</p>
+        <p>Rustel hosts VST3, not VST2. Scanning runs in the helper process, but plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> beside the plugin bundle.</p>
         <div class="callout">
           <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Hosted VST3 MIDI output is routed through the target directive above.</p>
         </div>
@@ -327,10 +329,11 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
 
       <section id="files">
         <h2>Load and save scores</h2>
-        <p>The plugin’s Load and Save controls use the portable <code>Scores</code> folder beside the plugin bundle. Rustel creates that folder when needed. This keeps score files with the extracted portable copy instead of requiring a fixed Windows user folder.</p>
+        <p>The plugin’s score and Csound source controls use the portable <code>Scores</code> folder beside the plugin bundle. Rustel creates that folder when needed. This keeps your files with the extracted portable copy instead of requiring a fixed Windows user folder.</p>
         <ul>
-          <li>Use <strong>Load</strong> to choose a <code>.strudel</code> or <code>.txt</code> score.</li>
-          <li>Use <strong>Save</strong> to store the current editor text in that folder.</li>
+          <li>Use <strong>Load</strong> and <strong>Save</strong> for Rustel score text in <code>.strudel</code> or <code>.txt</code> files.</li>
+          <li>Use <strong>Csound files…</strong> to load or save separate <code>.orc</code> and <code>.csd</code> source text. This separate editor does not replace the Rustel score or run when you press Evaluate.</li>
+          <li>A saved <code>.orc</code> can be referenced by a Rustel score with <code>await loadOrc("local:voice.orc")</code> after enabling Csound and setting the trusted orchestra folder. Csound source is code; only open files you trust.</li>
           <li>Keep the folder with the plugin when moving the portable setup to another location.</li>
         </ul>
         <p>DAW project state also stores the score draft, last accepted score, phrase settings, gain, transport options, and window state.</p>

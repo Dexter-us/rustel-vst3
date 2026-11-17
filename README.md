@@ -10,11 +10,11 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 
 ## What this version does
 
-- Edit Strudel scores inside the native plugin window, and load or save `.strudel` and `.txt` score files.
+- Edit Strudel scores inside the native plugin window, and load or save `.strudel` and `.txt` score files. A separate Csound source editor handles `.orc` and `.csd` text.
 - Press **Evaluate** or **Ctrl+Enter** to prepare the score without evaluating JavaScript in the audio callback.
 - Use built-in synths and the bundled `bd` kick sample.
 - Host installed x64 VST3 instruments with `.vsti("name")` and audio effects with `.vst("name", { parameter: value })`.
-- Scan installed plugins in the editor and add extra VST3 search folders without changing Windows environment settings.
+- Scan the standard Windows VST3 folders and browse to add extra plugin folders without changing Windows environment settings. The bundled scan helper runs without a console window.
 - Accept DAW MIDI note-on/off and velocity input; MIDI notes use the first basic oscillator sound in the active score.
 - Capture note-on/off and velocity from hosted VST3 MIDI generators/processors. Route the output to a Rustel built-in synth, a hosted VSTi, or a named Csound instrument.
 - Play stereo audio following DAW play/stop, tempo, song position, and loop jumps.
@@ -67,9 +67,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.1 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.1.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.1 --release --locked
+cargo build --package rustel-vst3@0.1.2 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.2.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.2 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -96,7 +96,7 @@ Start DAW playback after the status says **Ready**. Loading a preset only replac
 
 ## VST3 instruments and effects
 
-Use **Scan VST3 plugins** in the editor to list plugins from the standard Windows VST3 folders. Enter additional search folders in the VST3 folder field if needed; separate multiple paths with semicolons. These expressions use plugin names exactly as shown in the list:
+Use **Scan VST3 plugins** in the editor to list plugins from `%LOCALAPPDATA%\Programs\Common\VST3`, `%CommonProgramFiles%\VST3`, and any folders added with **Browse for a plugin folder**. You can also enter multiple paths in the VST3 folder field, separated by semicolons. The bundled `RustelVstWorker.exe` checks plugins one at a time in a separate process and should not open a console window. These expressions use plugin names exactly as shown in the list:
 
 ```javascript
 note("c2 e2 g2").vsti("Your instrument")
@@ -107,6 +107,8 @@ note("c2 e2 g2").vsti("Your instrument").vst("Your effect", { depth: 0.5 })
 ```
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
+
+The editor header shows the plugin version, such as **v0.1.2**. Use that label to distinguish this build from older downloads.
 
 Rustel also accepts DAW MIDI note input. In VSTHost, route a MIDI-generating plugin or MIDI-outputting VSTi into Rustel's MIDI input; Rustel honors note-on, note-off, and velocity. MIDI notes use the first basic oscillator's waveform and envelope in the active score, or sine if the score has no basic oscillator note. Hosted VST3 MIDI output is separate and uses the target directive below.
 
