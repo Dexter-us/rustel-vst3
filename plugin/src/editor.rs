@@ -2316,7 +2316,17 @@ fn should_use_portable_orchestra_root(saved_root: &str, portable_scores: &std::p
 }
 
 fn is_filesystem_root(path: &std::path::Path) -> bool {
-    path.is_absolute() && path.components().count() <= 2
+    use std::path::Component;
+
+    let mut has_root = false;
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) => {}
+            Component::RootDir => has_root = true,
+            _ => return false,
+        }
+    }
+    has_root
 }
 
 fn portable_orc_reference(path: &str, scores_root: &std::path::Path) -> Option<String> {

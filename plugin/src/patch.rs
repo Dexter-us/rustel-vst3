@@ -1003,7 +1003,8 @@ mod tests {
         let relative = orchestra_path
             .strip_prefix(&orchestra_root)
             .expect("ORC is under trusted root")
-            .to_string_lossy();
+            .to_string_lossy()
+            .replace('\\', "/");
         let escaped = js_string_literal(&format!("local:{relative}"));
         let code = graph
             .generate_code_with_orchestra_root(&orchestra_root.to_string_lossy())
