@@ -370,8 +370,8 @@ private:
 
         for (size_t index = 0; index < streamTokenBytes.size(); ++index)
         {
-            const auto high = nibble(streamToken[static_cast<int>(index * 2)]);
-            const auto low = nibble(streamToken[static_cast<int>(index * 2 + 1)]);
+            const auto high = nibble(config.streamToken[static_cast<int>(index * 2)]);
+            const auto low = nibble(config.streamToken[static_cast<int>(index * 2 + 1)]);
             if (high < 0 || low < 0)
                 throw std::runtime_error("The MIDI stream token is invalid.");
             streamTokenBytes[index] = static_cast<std::uint8_t>((high << 4) | low);
