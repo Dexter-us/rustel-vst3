@@ -60,11 +60,31 @@ pub struct VstPluginEntry {
     pub order: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct VstParameterChoice {
+    pub key: String,
+    pub name: String,
+    pub group: String,
+    pub default_value: f64,
+    pub default_shown: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VstParameterState {
+    pub plugin: String,
+    pub loading: bool,
+    pub ready: bool,
+    pub parameters: Vec<VstParameterChoice>,
+    pub error: Option<String>,
+}
+
 pub struct Shared {
     pub status: Mutex<String>,
     pub vst_plugins: Mutex<Vec<VstPluginEntry>>,
     pub vst_plugins_message: Mutex<String>,
     pub vst_sort: Mutex<VstSort>,
+    pub vst_parameter_request: Mutex<Option<String>>,
+    pub vst_parameter_state: Mutex<VstParameterState>,
     pub peak: AtomicF32,
     pub bpm: AtomicU64,
     pub beat: AtomicU64,
@@ -82,19 +102,37 @@ impl Shared {
         Self {
             status: Mutex::new("Waiting for the DAW to initialize audio.".into()),
             vst_plugins: Mutex::new(Vec::new()),
-            vst_plugins_message: Mutex::new("VST3 plugins have not been scanned yet.".into()),
+            vst_plugins_message: Mutex::new("Loading saved VST3 scan results on startup…".into()),
             vst_sort: Mutex::new(VstSort::Name),
+            vst_parameter_request: Mutex::new(None),
+            vst_parameter_state: Mutex::new(VstParameterState::default()),
             peak: AtomicF32::new(0.0),
             bpm: AtomicU64::new(120.0_f64.to_bits()),
             beat: AtomicU64::new(0.0_f64.to_bits()),
             refused: AtomicU64::new(0),
             requested: AtomicU64::new(0),
             sample_rate: AtomicU32::new(0),
-            scan_vst_plugins: AtomicBool::new(false),
+            // Restore the saved scan cache and refresh changed bundles as soon
+            // as the plugin worker starts; users should not need to rescan
+            // manually every time the DAW loads Rustel.
+            scan_vst_plugins: AtomicBool::new(true),
             shutdown: AtomicBool::new(false),
             ready: ArrayQueue::new(1),
             retired: ArrayQueue::new(8),
         }
+    }
+
+    pub fn request_vst_parameters(&self, plugin: &str) {
+        let mut state = self.vst_parameter_state.lock();
+        if state.plugin == plugin && (state.loading || state.ready) {
+            return;
+        }
+        *state = VstParameterState {
+            plugin: plugin.to_owned(),
+            loading: true,
+            ..VstParameterState::default()
+        };
+        *self.vst_parameter_request.lock() = Some(plugin.to_owned());
     }
 }
 
@@ -841,10 +879,29 @@ mod rendered_phrase_tests {
     }
 }
 
+#[cfg(test)]
+mod startup_scan_tests {
+    use super::Shared;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn plugin_startup_requests_a_vst_scan() {
+        let shared = Shared::new();
+        assert!(shared.scan_vst_plugins.load(Ordering::Acquire));
+        assert!(
+            shared
+                .vst_plugins_message
+                .lock()
+                .contains("Loading saved VST3 scan results")
+        );
+    }
+}
+
 fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
     let mut last_request = u64::MAX;
     let mut last_key = (0, 0, 0, 0_u64, false, String::new(), String::new());
     let mut last_applied = String::new();
+    let mut parameter_lookup = None;
     while !shared.shutdown.load(Ordering::Acquire) {
         while shared.retired.pop().is_some() {}
         if shared.scan_vst_plugins.swap(false, Ordering::AcqRel) {
@@ -897,6 +954,7 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
                 }
             }
         }
+        refresh_vst_parameter_lookup(&shared, &mut parameter_lookup);
         let request = shared.requested.load(Ordering::Acquire);
         let sample_rate = shared.sample_rate.load(Ordering::Acquire);
         let bpm = f64::from_bits(shared.bpm.load(Ordering::Relaxed));
@@ -987,6 +1045,66 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
         thread::sleep(Duration::from_millis(20));
     }
     while shared.retired.pop().is_some() {}
+}
+
+fn refresh_vst_parameter_lookup(shared: &Shared, active_plugin: &mut Option<String>) {
+    if let Some(plugin) = shared.vst_parameter_request.lock().take() {
+        *active_plugin = Some(plugin);
+    }
+    let Some(name) = active_plugin.clone() else {
+        return;
+    };
+
+    match rustel_runtime::vst::host().resolve(&name, false) {
+        rustel_runtime::vst::Resolved::Ready(_, plugin) => {
+            let parameters = plugin
+                .params()
+                .iter()
+                .map(|parameter| VstParameterChoice {
+                    key: parameter.key.clone(),
+                    name: parameter.name.clone(),
+                    group: parameter.group.clone(),
+                    default_value: if parameter.default.is_finite() {
+                        parameter.default.clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    },
+                    default_shown: parameter.default_shown(),
+                })
+                .collect();
+            *shared.vst_parameter_state.lock() = VstParameterState {
+                plugin: name,
+                loading: false,
+                ready: true,
+                parameters,
+                error: None,
+            };
+            *active_plugin = None;
+        }
+        rustel_runtime::vst::Resolved::Pending => {}
+        rustel_runtime::vst::Resolved::Missing => {
+            set_vst_parameter_error(shared, &name, "Plugin was not found in the VST3 scan.");
+            *active_plugin = None;
+        }
+        rustel_runtime::vst::Resolved::Failed(error) => {
+            set_vst_parameter_error(
+                shared,
+                &name,
+                &format!("Could not inspect the plugin: {error}"),
+            );
+            *active_plugin = None;
+        }
+    }
+}
+
+fn set_vst_parameter_error(shared: &Shared, plugin: &str, error: &str) {
+    *shared.vst_parameter_state.lock() = VstParameterState {
+        plugin: plugin.to_owned(),
+        loading: false,
+        ready: true,
+        parameters: Vec::new(),
+        error: Some(error.to_owned()),
+    };
 }
 
 impl Drop for Engine {

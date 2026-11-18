@@ -2772,18 +2772,6 @@ dependencies = [
 
 [[package]]
 name = "rustel-vst3"
-version = "0.1.7"
-dependencies = [
- "crossbeam-queue",
- "nih_plug",
- "nih_plug_egui",
- "parking_lot",
- "rustel-engine",
- "rustel-runtime",
-]
-
-[[package]]
-name = "rustel-vst3"
 version = "0.1.6"
 dependencies = [
  "libloading",
@@ -2792,6 +2780,19 @@ dependencies = [
  "serde",
  "serde_json",
  "vst3",
+]
+
+[[package]]
+name = "rustel-vst3"
+version = "0.1.9"
+dependencies = [
+ "copypasta",
+ "crossbeam-queue",
+ "nih_plug",
+ "nih_plug_egui",
+ "parking_lot",
+ "rustel-engine",
+ "rustel-runtime",
 ]
 
 [[package]]

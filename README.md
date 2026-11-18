@@ -67,9 +67,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.7 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.7.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.7 --release --locked
+cargo build --package rustel-vst3@0.1.9 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.9.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.9 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -96,7 +96,7 @@ Start DAW playback after the status says **Ready**. Loading a preset only replac
 
 ## VST3 instruments and effects
 
-Use **Scan VST3 plugins** in the editor to list plugins from `%LOCALAPPDATA%\Programs\Common\VST3`, `%CommonProgramFiles%\VST3`, and any folders added with **Browse for a plugin folder**. You can also enter multiple paths in the VST3 folder field, separated by semicolons. Custom folder choices are shared by Rustel instances using the same data directory and saved in `RustelData/vst/folders.txt`. The bundled `RustelVstWorker.exe` checks plugins one at a time in a separate process and should not open a console window. The editor shows the bundle and plugin class currently being checked. Each class has a 30-second limit; other bundles continue if a plugin times out. The overall scan can run for up to two hours. Results, including failures, are saved in `RustelData/vst/scan.json` and reused until a bundle changes. Delete only that file to retry all bundles; saved presets are kept. These expressions use plugin names exactly as shown in the list:
+Rustel automatically loads saved scan results and checks for changed bundles when the plugin starts. Use **Scan VST3 plugins** to run that check again manually. Rustel searches `%LOCALAPPDATA%\Programs\Common\VST3`, `%CommonProgramFiles%\VST3`, and any folders added with **Browse for a plugin folder**. You can also enter multiple paths in the VST3 folder field, separated by semicolons. Custom folder choices are shared by Rustel instances using the same data directory and saved in `RustelData/vst/folders.txt`. The bundled `RustelVstWorker.exe` checks plugins one at a time in a separate process and should not open a console window. The editor shows the bundle and plugin class currently being checked. Each class has a 30-second limit; other bundles continue if a plugin times out. The overall scan can run for up to two hours. Results, including failures, are saved in `RustelData/vst/scan.json` and reused until a bundle changes. Delete only that file to retry all bundles; saved presets are kept. These expressions use plugin names exactly as shown in the list:
 
 Click **Open plugin list…** to open the searchable, resizable directory popup. It shows the scanned plugin count and groups results under Instruments or Effects / processors, then by VST3 category. The browser has **Insert instrument/effect** buttons that place a ready-to-edit example at the score caret. Sort by name, type, category, MIDI tag, or manual order; in manual order, use the arrows to rearrange plugins. Expand a plugin row to edit its display label or optional **MIDI output usable** tag. Those directory settings are saved in `RustelData/vst/directory.tsv`. Choose **MIDI source** to generate a MIDI-routing example to a Rustel synth or a scanned VSTi. The MIDI tag is your own note and does not test the plugin; choose the MIDI-source action only for plugins that output MIDI.
 
@@ -105,12 +105,16 @@ note("c2 e2 g2").vsti("Your instrument")
 ```
 
 ```javascript
-note("c2 e2 g2").vsti("Your instrument").vst("Your effect", { depth: 0.5 })
+note("c2 e2 g2")
+  .vsti("Your instrument")
+  .vst("Your effect", { mix: 0.5 })
 ```
+
+Add an effect by chaining `.vst("Effect Name")` after the sound or instrument. Effect controls use the VST's parameter keys with normalized values from 0 to 1. In the score editor, right-click the effect name inside `.vst("...")` to load its available controls and insert one with its default value. The same editor context menu includes Copy, Cut, and Paste.
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
 
-The editor header shows the plugin version, such as **v0.1.7**. Use that label to distinguish this build from older downloads.
+The editor header shows the plugin version, such as **v0.1.9**. Use that label to distinguish this build from older downloads.
 
 Rustel also accepts DAW MIDI note input. In VSTHost, route a MIDI-generating plugin or MIDI-outputting VSTi into Rustel's MIDI input; Rustel honors note-on, note-off, and velocity. MIDI notes use the first basic oscillator's waveform and envelope in the active score, or sine if the score has no basic oscillator note. Hosted VST3 MIDI output is separate and uses the target directive below.
 
@@ -139,6 +143,8 @@ note("c4 ~ e4").vsti("MIDI generator")
 ```
 
 The sample or wavetable name must be available to Rustel; uncached library sounds load when you evaluate the score. The graph target is a KabelSalat expression with `sFreq` and `sGate` available, and it must send sound to `.out()`. These routes render notes, velocity, and note-off duration into the prepared phrase off the audio callback. MIDI CC, pitch bend, aftertouch, and SysEx are not routed.
+
+In **Open plugin list → MIDI source**, choose **Rustel sample**, **Rustel wavetable**, or **KabelSalat graph** to insert these directives. Edit the sample/wavetable name or graph expression in the menu before inserting.
 
 ## Csound
 

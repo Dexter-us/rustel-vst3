@@ -1,4 +1,5 @@
 use crate::{engine::Shared, params::RustelParams};
+use copypasta::{ClipboardContext, ClipboardProvider};
 use nih_plug::prelude::*;
 use nih_plug_egui::{
     EguiState, create_egui_editor,
@@ -16,8 +17,23 @@ struct ScoreFileUi {
     vst_folders_loaded: bool,
     editor_selection: Option<std::ops::Range<usize>>,
     pending_insert: Option<String>,
+    pending_score_update: Option<(String, usize)>,
+    context_vst_target: Option<VstCodeTarget>,
+    parameter_search: String,
+    midi_sample_target: String,
+    midi_wavetable_target: String,
+    midi_graph_target: String,
     plugin_directory_open: bool,
     plugin_search: String,
+}
+
+#[derive(Clone, Debug)]
+struct VstCodeTarget {
+    name: String,
+    name_bytes: std::ops::Range<usize>,
+    call_close_byte: usize,
+    has_second_argument: bool,
+    parameter_object_bytes: Option<std::ops::Range<usize>>,
 }
 
 struct FolderPicker {
@@ -286,7 +302,11 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                 let mut draft = params.draft.lock().clone();
                 let mut changed = false;
                 let mut inserted_cursor = None;
-                if let Some(snippet) = file_ui.pending_insert.take() {
+                if let Some((updated, cursor)) = file_ui.pending_score_update.take() {
+                    draft = updated;
+                    inserted_cursor = Some(cursor);
+                    changed = true;
+                } else if let Some(snippet) = file_ui.pending_insert.take() {
                     let selection = file_ui.editor_selection.clone().unwrap_or_else(|| {
                         let end = draft.chars().count();
                         end..end
@@ -309,7 +329,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         output.state.cursor.set_char_range(Some(
                             egui::text::CCursorRange::one(egui::text::CCursor::new(cursor)),
                         ));
-                        output.state.store(ui.ctx(), output.response.id);
+                        output.state.clone().store(ui.ctx(), output.response.id);
                         file_ui.editor_selection = Some(cursor..cursor);
                     } else if let Some(cursor_range) = output.cursor_range {
                         file_ui.editor_selection =
@@ -318,6 +338,162 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     if output.response.changed() {
                         changed = true;
                     }
+                    if output.response.secondary_clicked() {
+                        let previous_target = file_ui
+                            .context_vst_target
+                            .as_ref()
+                            .map(|target| target.name.clone());
+                        file_ui.context_vst_target = None;
+                        let clicked_char = ui.ctx().input(|input| {
+                            input.pointer.interact_pos().map(|position| {
+                                output
+                                    .galley
+                                    .cursor_from_pos(position - output.galley_pos)
+                                    .ccursor
+                                    .index
+                            })
+                        });
+                        if let Some(clicked_char) = clicked_char {
+                            let existing = file_ui.editor_selection.clone();
+                            file_ui.editor_selection = Some(match existing {
+                                Some(range)
+                                    if range.start <= clicked_char && clicked_char <= range.end =>
+                                {
+                                    range
+                                }
+                                _ => clicked_char..clicked_char,
+                            });
+                            file_ui.context_vst_target = find_vst_call_at_char(&draft, clicked_char);
+                            if let Some(target) = &file_ui.context_vst_target {
+                                if previous_target.as_deref() != Some(target.name.as_str()) {
+                                    file_ui.parameter_search.clear();
+                                }
+                                let name_range = draft[..target.name_bytes.start].chars().count()
+                                    ..draft[..target.name_bytes.end].chars().count();
+                                output.state.cursor.set_char_range(Some(
+                                    egui::text::CCursorRange::two(
+                                        egui::text::CCursor::new(name_range.start),
+                                        egui::text::CCursor::new(name_range.end),
+                                    ),
+                                ));
+                                output.state.store(ui.ctx(), output.response.id);
+                                file_ui.editor_selection = Some(name_range);
+                                shared.request_vst_parameters(&target.name);
+                            }
+                        }
+                    }
+                    let context = file_ui.context_vst_target.clone();
+                    output.response.context_menu(|menu| {
+                        let selection = file_ui.editor_selection.clone().unwrap_or_else(|| {
+                            let end = draft.chars().count();
+                            end..end
+                        });
+                        let selected = text_at_char_range(&draft, selection.clone());
+                        if menu.button("Copy").clicked() {
+                            if !selected.is_empty() {
+                                menu.ctx().copy_text(selected.clone());
+                            }
+                            menu.close_menu();
+                        }
+                        if menu.button("Cut").clicked() {
+                            if !selected.is_empty() {
+                                menu.ctx().copy_text(selected);
+                                let (updated, cursor) =
+                                    replace_char_range(&draft, selection.clone(), "");
+                                file_ui.pending_score_update = Some((updated, cursor));
+                            }
+                            menu.close_menu();
+                        }
+                        if menu.button("Paste").clicked() {
+                            match clipboard_text() {
+                                Ok(pasted) => {
+                                    let (updated, cursor) =
+                                        replace_char_range(&draft, selection.clone(), &pasted);
+                                    file_ui.pending_score_update = Some((updated, cursor));
+                                }
+                                Err(error) => file_ui.message = error,
+                            }
+                            menu.close_menu();
+                        }
+
+                        if let Some(target) = context {
+                            menu.separator();
+                            menu.label(format!("Effect parameters · {}", target.name));
+                            let state = shared.vst_parameter_state.lock().clone();
+                            if state.plugin != target.name || state.loading {
+                                shared.request_vst_parameters(&target.name);
+                                menu.colored_label(
+                                    Color32::LIGHT_BLUE,
+                                    "Loading the effect and its parameters…",
+                                );
+                            } else if let Some(error) = state.error {
+                                menu.colored_label(Color32::LIGHT_RED, error);
+                            } else if state.parameters.is_empty() {
+                                menu.label("This effect has no exposed parameters.");
+                            } else {
+                                if target.has_second_argument
+                                    && target.parameter_object_bytes.is_none()
+                                {
+                                    menu.small(
+                                        "Use a literal parameter object to insert controls here.",
+                                    );
+                                }
+                                menu.add(
+                                    TextEdit::singleline(&mut file_ui.parameter_search)
+                                        .hint_text("Filter parameters"),
+                                );
+                                let query = file_ui.parameter_search.trim().to_ascii_lowercase();
+                                egui::ScrollArea::vertical()
+                                    .max_height(240.0)
+                                    .show(menu, |menu| {
+                                        for parameter in &state.parameters {
+                                            if !query.is_empty()
+                                                && !parameter
+                                                    .name
+                                                    .to_ascii_lowercase()
+                                                    .contains(&query)
+                                                && !parameter.key.to_ascii_lowercase().contains(&query)
+                                                && !parameter
+                                                    .group
+                                                    .to_ascii_lowercase()
+                                                    .contains(&query)
+                                            {
+                                                continue;
+                                            }
+                                            let group = if parameter.group.is_empty() {
+                                                String::new()
+                                            } else {
+                                                format!("{} · ", parameter.group)
+                                            };
+                                            let label = format!(
+                                                "{group}{} ({}) · {}",
+                                                parameter.name,
+                                                parameter.key,
+                                                parameter.default_shown
+                                            );
+                                            if menu.button(label).clicked() {
+                                                if let Some((updated, cursor)) =
+                                                    insert_vst_parameter(
+                                                        &draft,
+                                                        &target,
+                                                        parameter,
+                                                    )
+                                                {
+                                                    file_ui.pending_score_update =
+                                                        Some((updated, cursor));
+                                                } else {
+                                                    file_ui.message = "The parameter picker can edit a direct `{ key: value }` object, not a variable or expression.".into();
+                                                }
+                                                menu.close_menu();
+                                            }
+                                        }
+                                    });
+                            }
+                        } else {
+                            menu.separator();
+                            menu.small("Right-click an effect name inside .vst(\"Name\") to browse its parameters.");
+                        }
+                    });
                 });
                 if changed {
                     *params.draft.lock() = draft;
@@ -367,6 +543,222 @@ fn insert_code_at_char_range(
     (result, start + insertion.chars().count())
 }
 
+fn replace_char_range(
+    source: &str,
+    selection: std::ops::Range<usize>,
+    replacement: &str,
+) -> (String, usize) {
+    let char_count = source.chars().count();
+    let start = selection.start.min(char_count);
+    let end = selection.end.min(char_count).max(start);
+    let byte_at = |char_index: usize| {
+        source
+            .char_indices()
+            .nth(char_index)
+            .map_or(source.len(), |(byte, _)| byte)
+    };
+    let start_byte = byte_at(start);
+    let end_byte = byte_at(end);
+    let mut result =
+        String::with_capacity(source.len() - (end_byte - start_byte) + replacement.len());
+    result.push_str(&source[..start_byte]);
+    result.push_str(replacement);
+    result.push_str(&source[end_byte..]);
+    (result, start + replacement.chars().count())
+}
+
+fn text_at_char_range(source: &str, selection: std::ops::Range<usize>) -> String {
+    let start = selection.start.min(source.chars().count());
+    let end = selection.end.min(source.chars().count()).max(start);
+    source.chars().skip(start).take(end - start).collect()
+}
+
+fn find_vst_call_at_char(source: &str, cursor_char: usize) -> Option<VstCodeTarget> {
+    let cursor_byte = source
+        .char_indices()
+        .nth(cursor_char)
+        .map_or(source.len(), |(byte, _)| byte);
+    for (start, _) in source.match_indices(".vst(") {
+        if start > 0
+            && source[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| character.is_alphanumeric() || character == '_')
+        {
+            continue;
+        }
+        let open_paren = start + 4;
+        let bytes = source.as_bytes();
+        let mut quote_at = open_paren + 1;
+        while bytes.get(quote_at).is_some_and(u8::is_ascii_whitespace) {
+            quote_at += 1;
+        }
+        let Some(&quote) = bytes.get(quote_at) else {
+            continue;
+        };
+        if quote != b'"' && quote != b'\'' {
+            continue;
+        }
+        let name_start = quote_at + 1;
+        let mut name_end = name_start;
+        let mut escaped = false;
+        while let Some(&byte) = bytes.get(name_end) {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                break;
+            }
+            name_end += 1;
+        }
+        if bytes.get(name_end) != Some(&quote) || cursor_byte < name_start || cursor_byte > name_end
+        {
+            continue;
+        }
+        let name = decode_js_string(&source[name_start..name_end]);
+        let Some(call_close_byte) = matching_delimiter(source, open_paren, b'(', b')') else {
+            continue;
+        };
+        let mut after_name = name_end + 1;
+        while bytes.get(after_name).is_some_and(u8::is_ascii_whitespace) {
+            after_name += 1;
+        }
+        let has_second_argument = bytes.get(after_name) == Some(&b',');
+        let parameter_object_bytes = if has_second_argument {
+            let mut argument = after_name + 1;
+            while bytes.get(argument).is_some_and(u8::is_ascii_whitespace) {
+                argument += 1;
+            }
+            (bytes.get(argument) == Some(&b'{'))
+                .then(|| matching_delimiter(source, argument, b'{', b'}').map(|end| argument..end))
+                .flatten()
+        } else {
+            None
+        };
+        return Some(VstCodeTarget {
+            name,
+            name_bytes: name_start..name_end,
+            call_close_byte,
+            has_second_argument,
+            parameter_object_bytes,
+        });
+    }
+    None
+}
+
+fn matching_delimiter(source: &str, open_at: usize, open: u8, close: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(open_at) != Some(&open) {
+        return None;
+    }
+    let mut depth = 0_usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = open_at;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active_quote {
+                quote = None;
+            }
+        } else if byte == b'\'' || byte == b'"' || byte == b'`' {
+            quote = Some(byte);
+        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        } else if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        } else if byte == open {
+            depth += 1;
+        } else if byte == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn decode_js_string(source: &str) -> String {
+    let mut decoded = String::with_capacity(source.len());
+    let mut characters = source.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        match characters.next() {
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some('t') => decoded.push('\t'),
+            Some(escaped) => decoded.push(escaped),
+            None => decoded.push('\\'),
+        }
+    }
+    decoded
+}
+
+fn insert_vst_parameter(
+    source: &str,
+    target: &VstCodeTarget,
+    parameter: &crate::engine::VstParameterChoice,
+) -> Option<(String, usize)> {
+    if target.has_second_argument && target.parameter_object_bytes.is_none() {
+        return None;
+    }
+    let value = if parameter.default_value.is_finite() {
+        let shown = format!("{:.4}", parameter.default_value.clamp(0.0, 1.0));
+        shown.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        "0.5".to_owned()
+    };
+    let property = format!("{}: {value}", quoted_code_string(&parameter.key));
+    let (position, insertion) = if let Some(object) = &target.parameter_object_bytes {
+        let content = &source[object.start + 1..object.end];
+        let position = object.start + 1 + content.trim_end().len();
+        let insertion = if content.trim().is_empty() {
+            format!(" {property}")
+        } else {
+            format!(", {property}")
+        };
+        (position, insertion)
+    } else {
+        (target.call_close_byte, format!(", {{ {property} }}"))
+    };
+    if position > source.len() || !source.is_char_boundary(position) {
+        return None;
+    }
+    let mut updated = String::with_capacity(source.len() + insertion.len());
+    updated.push_str(&source[..position]);
+    updated.push_str(&insertion);
+    updated.push_str(&source[position..]);
+    let cursor = updated[..position + insertion.len()].chars().count();
+    Some((updated, cursor))
+}
+
+fn clipboard_text() -> Result<String, String> {
+    let mut clipboard = ClipboardContext::new()
+        .map_err(|error| format!("Could not open the system clipboard: {error}"))?;
+    clipboard
+        .get_contents()
+        .map_err(|error| format!("Could not read the system clipboard: {error}"))
+}
+
 fn quoted_code_string(value: &str) -> String {
     let mut quoted = String::from("\"");
     for character in value.chars() {
@@ -390,11 +782,15 @@ fn plugin_example(name: &str, instrument: bool) -> String {
 }
 
 fn plugin_midi_example(name: &str, instrument: bool, target: Option<&str>) -> String {
-    let method = if instrument { "vsti" } else { "vst" };
     let target = match target {
         Some(target) => format!("vsti {}", quoted_code_string(target)),
         None => "rustel \"sine\"".into(),
     };
+    plugin_midi_target_example(name, instrument, &target)
+}
+
+fn plugin_midi_target_example(name: &str, instrument: bool, target: &str) -> String {
+    let method = if instrument { "vsti" } else { "vst" };
     format!(
         "// MIDI target: {target}\nnote(\"c4\").{method}({})",
         quoted_code_string(name)
@@ -413,6 +809,15 @@ fn draw_plugin_directory(ctx: &egui::Context, file_ui: &mut ScoreFileUi, shared:
         .default_size(egui::vec2(760.0, 620.0))
         .resizable(true)
         .show(ctx, |ui| {
+            if file_ui.midi_sample_target.is_empty() {
+                file_ui.midi_sample_target = "bd".into();
+            }
+            if file_ui.midi_wavetable_target.is_empty() {
+                file_ui.midi_wavetable_target = "wt_x".into();
+            }
+            if file_ui.midi_graph_target.is_empty() {
+                file_ui.midi_graph_target = "sine(sFreq).mul(0.2).out()".into();
+            }
             let mut plugins = shared.vst_plugins.lock().clone();
             let plugin_message = shared.vst_plugins_message.lock().clone();
             let saved_sort = *shared.vst_sort.lock();
@@ -630,6 +1035,57 @@ fn draw_plugin_row(
                     *close_after_insert = true;
                     ui.close_menu();
                 }
+                ui.menu_button("Rustel sample", |ui| {
+                    ui.label("Sample name available to Rustel:");
+                    ui.text_edit_singleline(&mut file_ui.midi_sample_target);
+                    if ui.button("Insert sample route").clicked()
+                        && !file_ui.midi_sample_target.trim().is_empty()
+                    {
+                        file_ui.pending_insert = Some(plugin_midi_target_example(
+                            &plugin.name,
+                            plugin.instrument,
+                            &format!(
+                                "sample {}",
+                                quoted_code_string(file_ui.midi_sample_target.trim())
+                            ),
+                        ));
+                        *close_after_insert = true;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("Rustel wavetable", |ui| {
+                    ui.label("Wavetable name available to Rustel:");
+                    ui.text_edit_singleline(&mut file_ui.midi_wavetable_target);
+                    if ui.button("Insert wavetable route").clicked()
+                        && !file_ui.midi_wavetable_target.trim().is_empty()
+                    {
+                        file_ui.pending_insert = Some(plugin_midi_target_example(
+                            &plugin.name,
+                            plugin.instrument,
+                            &format!(
+                                "wavetable {}",
+                                quoted_code_string(file_ui.midi_wavetable_target.trim())
+                            ),
+                        ));
+                        *close_after_insert = true;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("KabelSalat graph", |ui| {
+                    ui.label("Graph expression; use sFreq/sGate and send sound to .out():");
+                    ui.text_edit_singleline(&mut file_ui.midi_graph_target);
+                    if ui.button("Insert graph route").clicked()
+                        && !file_ui.midi_graph_target.trim().is_empty()
+                    {
+                        file_ui.pending_insert = Some(plugin_midi_target_example(
+                            &plugin.name,
+                            plugin.instrument,
+                            &format!("graph {}", file_ui.midi_graph_target.trim()),
+                        ));
+                        *close_after_insert = true;
+                        ui.close_menu();
+                    }
+                });
                 for target in targets {
                     if ui.button(format!("Route to {}", target.name)).clicked() {
                         file_ui.pending_insert = Some(plugin_midi_example(
@@ -798,10 +1254,14 @@ fn start_folder_picker(file_ui: &mut ScoreFileUi) {
 #[cfg(test)]
 mod vst_code_generation_tests {
     use super::{
-        insert_code_at_char_range, plugin_category_group, plugin_example, plugin_matches_search,
-        plugin_midi_example, sort_vst_plugins,
+        find_vst_call_at_char, insert_code_at_char_range, insert_vst_parameter,
+        plugin_category_group, plugin_example, plugin_matches_search, plugin_midi_example,
+        plugin_midi_target_example, replace_char_range, sort_vst_plugins, text_at_char_range,
     };
-    use crate::{engine::VstPluginEntry, vst_catalog::VstSort};
+    use crate::{
+        engine::{VstParameterChoice, VstPluginEntry},
+        vst_catalog::VstSort,
+    };
 
     #[test]
     fn examples_choose_the_call_from_the_scanned_plugin_type() {
@@ -828,10 +1288,97 @@ mod vst_code_generation_tests {
     }
 
     #[test]
+    fn midi_target_choices_generate_sample_wavetable_and_graph_directives() {
+        assert_eq!(
+            plugin_midi_target_example("Arp", true, "sample \"bd\""),
+            "// MIDI target: sample \"bd\"\nnote(\"c4\").vsti(\"Arp\")"
+        );
+        assert_eq!(
+            plugin_midi_target_example("Arp", true, "wavetable \"wt_x\""),
+            "// MIDI target: wavetable \"wt_x\"\nnote(\"c4\").vsti(\"Arp\")"
+        );
+        assert_eq!(
+            plugin_midi_target_example("Arp", true, "graph sine(sFreq).mul(0.2).out()"),
+            "// MIDI target: graph sine(sFreq).mul(0.2).out()\nnote(\"c4\").vsti(\"Arp\")"
+        );
+    }
+
+    #[test]
     fn insertion_replaces_the_selected_characters_and_handles_unicode() {
         let (result, cursor) = insert_code_at_char_range("α\nβ", 2..3, "PLUGIN");
         assert_eq!(result, "α\nPLUGIN");
         assert_eq!(cursor, 8);
+    }
+
+    #[test]
+    fn clipboard_selection_replacement_preserves_unicode() {
+        let source = "α beta";
+        assert_eq!(text_at_char_range(source, 2..6), "beta");
+        assert_eq!(
+            replace_char_range(source, 2..6, "sound"),
+            ("α sound".into(), 7)
+        );
+    }
+
+    #[test]
+    fn right_click_target_finds_vst_effect_name_and_ignores_vsti() {
+        let source = r#"note("c3").vsti("Keys").vst("Room Verb")"#;
+        let cursor = source
+            .chars()
+            .position(|character| character == 'V')
+            .unwrap();
+        let target = find_vst_call_at_char(source, cursor).expect("effect name");
+        assert_eq!(target.name, "Room Verb");
+
+        let instrument = r#"note("c3").vsti("Keys")"#;
+        let cursor = instrument
+            .chars()
+            .position(|character| character == 'K')
+            .unwrap();
+        assert!(find_vst_call_at_char(instrument, cursor).is_none());
+    }
+
+    #[test]
+    fn parameter_choice_adds_a_normalized_value_to_effect_call() {
+        let source = r#"note("c3").vst("Room Verb")"#;
+        let cursor = source
+            .chars()
+            .position(|character| character == 'R')
+            .unwrap();
+        let target = find_vst_call_at_char(source, cursor).expect("effect name");
+        let parameter = VstParameterChoice {
+            key: "mix".into(),
+            name: "Mix".into(),
+            group: String::new(),
+            default_value: 0.375,
+            default_shown: "0.375".into(),
+        };
+        let (updated, _) =
+            insert_vst_parameter(source, &target, &parameter).expect("updated effect");
+        assert_eq!(updated, r#"note("c3").vst("Room Verb", { "mix": 0.375 })"#);
+    }
+
+    #[test]
+    fn parameter_choice_appends_to_an_existing_effect_parameter_object() {
+        let source = r#"note("c3").vst("Room Verb", { decay: 0.7 })"#;
+        let cursor = source
+            .chars()
+            .position(|character| character == 'R')
+            .unwrap();
+        let target = find_vst_call_at_char(source, cursor).expect("effect name");
+        let parameter = VstParameterChoice {
+            key: "mix".into(),
+            name: "Mix".into(),
+            group: String::new(),
+            default_value: 0.5,
+            default_shown: "0.5".into(),
+        };
+        let (updated, _) =
+            insert_vst_parameter(source, &target, &parameter).expect("updated effect");
+        assert_eq!(
+            updated,
+            r#"note("c3").vst("Room Verb", { decay: 0.7, "mix": 0.5 })"#
+        );
     }
 
     #[test]

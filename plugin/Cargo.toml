@@ -17,6 +17,7 @@ rustel-engine.workspace = true
 rustel-runtime.workspace = true
 crossbeam-queue = "0.3"
 parking_lot = "0.12"
+copypasta = { version = "0.10", default-features = false, features = ["x11"] }
 
 [features]
 assert-process-allocs = ["nih_plug/assert_process_allocs"]
