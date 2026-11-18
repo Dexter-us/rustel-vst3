@@ -16,6 +16,8 @@ struct ScoreFileUi {
     vst_folders_loaded: bool,
     editor_selection: Option<std::ops::Range<usize>>,
     pending_insert: Option<String>,
+    plugin_directory_open: bool,
+    plugin_search: String,
 }
 
 struct FolderPicker {
@@ -210,187 +212,14 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         );
                     }
                     ui.small("Each plugin class has a 30-second limit; the full scan can run up to two hours. Results persist in RustelData/vst/scan.json; delete that file to retry an unchanged bundle.");
-                    ui.label("Plugin directory — Insert adds code at the editor cursor");
-                    ui.small("VST3 category is read from the plugin. Labels and MIDI tags are your editable notes.");
-                    let mut plugin_entries = shared.vst_plugins.lock().clone();
-                    let plugin_message = shared.vst_plugins_message.lock().clone();
-                    let saved_sort = *shared.vst_sort.lock();
-                    let mut sort = saved_sort;
+                    let plugin_count = shared.vst_plugins.lock().len();
                     ui.horizontal(|ui| {
-                        ui.label("Sort");
-                        egui::ComboBox::from_id_salt("rustel-vst-directory-sort")
-                            .selected_text(sort.label())
-                            .show_ui(ui, |ui| {
-                                for option in [
-                                    crate::vst_catalog::VstSort::Name,
-                                    crate::vst_catalog::VstSort::Type,
-                                    crate::vst_catalog::VstSort::Category,
-                                    crate::vst_catalog::VstSort::MidiFirst,
-                                    crate::vst_catalog::VstSort::Manual,
-                                ] {
-                                    ui.selectable_value(&mut sort, option, option.label());
-                                }
-                            });
-                    });
-                    if sort != saved_sort {
-                        *shared.vst_sort.lock() = sort;
-                    }
-                    sort_vst_plugins(&mut plugin_entries, sort);
-                    let targets = plugin_entries
-                        .iter()
-                        .filter(|plugin| plugin.instrument)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let mut directory_changed = sort != saved_sort;
-                    let mut reorder = None;
-                    egui::ScrollArea::vertical()
-                        .max_height(280.0)
-                        .show(ui, |ui| {
-                            if !plugin_message.is_empty() {
-                                ui.small(&plugin_message);
-                            }
-                            for index in 0..plugin_entries.len() {
-                                let mut plugin = plugin_entries[index].clone();
-                                ui.group(|ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        let label = if plugin.display_label.trim().is_empty() {
-                                            plugin.name.as_str()
-                                        } else {
-                                            plugin.display_label.trim()
-                                        };
-                                        ui.strong(label);
-                                        ui.small(if plugin.instrument {
-                                            "Instrument"
-                                        } else {
-                                            "Effect / processor"
-                                        });
-                                        if plugin.midi_source {
-                                            ui.small("MIDI");
-                                        }
-                                    });
-                                    let vendor = if plugin.vendor.is_empty() {
-                                        "Vendor unavailable"
-                                    } else {
-                                        &plugin.vendor
-                                    };
-                                    let category = if plugin.categories.is_empty() {
-                                        "VST3 category unavailable"
-                                    } else {
-                                        &plugin.categories
-                                    };
-                                    ui.small(format!("{vendor} · {category}"));
-                                    ui.horizontal_wrapped(|ui| {
-                                        let insert_label = if plugin.instrument {
-                                            "Insert instrument"
-                                        } else {
-                                            "Insert effect"
-                                        };
-                                        if ui.small_button(insert_label).clicked() {
-                                            file_ui.pending_insert = Some(plugin_example(
-                                                &plugin.name,
-                                                plugin.instrument,
-                                            ));
-                                        }
-                                        ui.menu_button("MIDI source", |ui| {
-                                            ui.small(
-                                                "For a plugin that outputs MIDI; this tag is optional.",
-                                            );
-                                            if ui.button("Route to Rustel sine").clicked() {
-                                                file_ui.pending_insert = Some(
-                                                    plugin_midi_example(
-                                                        &plugin.name,
-                                                        plugin.instrument,
-                                                        None,
-                                                    ),
-                                                );
-                                                ui.close_menu();
-                                            }
-                                            for target in &targets {
-                                                if ui
-                                                    .button(format!(
-                                                        "Route to {}",
-                                                        target.name
-                                                    ))
-                                                    .clicked()
-                                                {
-                                                    file_ui.pending_insert = Some(
-                                                        plugin_midi_example(
-                                                            &plugin.name,
-                                                            plugin.instrument,
-                                                            Some(&target.name),
-                                                        ),
-                                                    );
-                                                    ui.close_menu();
-                                                }
-                                            }
-                                        });
-                                        if sort == crate::vst_catalog::VstSort::Manual {
-                                            ui.add_enabled_ui(index > 0, |ui| {
-                                                if ui.small_button("↑").clicked() {
-                                                    reorder = Some((index, -1_i8));
-                                                }
-                                            });
-                                            ui.add_enabled_ui(
-                                                index + 1 < plugin_entries.len(),
-                                                |ui| {
-                                                    if ui.small_button("↓").clicked() {
-                                                        reorder = Some((index, 1_i8));
-                                                    }
-                                                },
-                                            );
-                                        }
-                                    });
-                                    ui.collapsing("Edit label and MIDI tag", |ui| {
-                                        let mut label = plugin.display_label.clone();
-                                        let response = ui.add(
-                                            TextEdit::singleline(&mut label)
-                                                .id(egui::Id::new((
-                                                    "rustel-vst-label",
-                                                    plugin.key.clone(),
-                                                )))
-                                                .hint_text("Optional display label"),
-                                        );
-                                        if response.changed() {
-                                            plugin.display_label = label;
-                                            directory_changed = true;
-                                        }
-                                        let mut midi_source = plugin.midi_source;
-                                        if ui
-                                            .checkbox(&mut midi_source, "MIDI output usable")
-                                            .changed()
-                                        {
-                                            plugin.midi_source = midi_source;
-                                            directory_changed = true;
-                                        }
-                                        ui.small(
-                                            "The MIDI tag is your note; it does not test or change the plugin.",
-                                        );
-                                    });
-                                });
-                                plugin_entries[index] = plugin;
-                            }
-                            if let Some((index, direction)) = reorder {
-                                let next = if direction < 0 {
-                                    index.saturating_sub(1)
-                                } else {
-                                    (index + 1).min(plugin_entries.len().saturating_sub(1))
-                                };
-                                if next != index {
-                                    plugin_entries.swap(index, next);
-                                    for (position, plugin) in plugin_entries.iter_mut().enumerate()
-                                    {
-                                        plugin.order = position as u64 * 1024;
-                                    }
-                                    directory_changed = true;
-                                }
-                            }
-                        });
-                    if directory_changed {
-                        *shared.vst_plugins.lock() = plugin_entries.clone();
-                        if let Err(error) = save_plugin_directory(sort, &plugin_entries) {
-                            file_ui.message = error;
+                        ui.label(format!("Scanned plugins: {plugin_count}"));
+                        if ui.button("Open plugin list…").clicked() {
+                            file_ui.plugin_directory_open = true;
                         }
-                    }
+                    });
+                    ui.small("The full directory opens in a searchable popup grouped by instrument/effect and VST3 category.");
                     ui.separator();
                     ui.label("Examples");
                     for (name, source) in [
@@ -495,6 +324,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     mark_dirty(setter, &params);
                 }
             });
+            draw_plugin_directory(ctx, file_ui, &shared);
             draw_score_dialog(ctx, file_ui, &params, setter);
             draw_folder_picker(ctx, file_ui, &params, setter);
             draw_csound_editor(ctx, file_ui);
@@ -569,6 +399,326 @@ fn plugin_midi_example(name: &str, instrument: bool, target: Option<&str>) -> St
         "// MIDI target: {target}\nnote(\"c4\").{method}({})",
         quoted_code_string(name)
     )
+}
+
+fn draw_plugin_directory(ctx: &egui::Context, file_ui: &mut ScoreFileUi, shared: &Shared) {
+    if !file_ui.plugin_directory_open {
+        return;
+    }
+
+    let mut open = file_ui.plugin_directory_open;
+    let mut close_after_insert = false;
+    egui::Window::new("VST3 Plugin Directory")
+        .open(&mut open)
+        .default_size(egui::vec2(760.0, 620.0))
+        .resizable(true)
+        .show(ctx, |ui| {
+            let mut plugins = shared.vst_plugins.lock().clone();
+            let plugin_message = shared.vst_plugins_message.lock().clone();
+            let saved_sort = *shared.vst_sort.lock();
+            let mut sort = saved_sort;
+
+            ui.horizontal(|ui| {
+                ui.strong(format!("{} scanned", plugins.len()));
+                ui.add(
+                    TextEdit::singleline(&mut file_ui.plugin_search)
+                        .desired_width(260.0)
+                        .hint_text("Search name, vendor, category, MIDI tag"),
+                );
+                egui::ComboBox::from_id_salt("rustel-vst-directory-sort")
+                    .selected_text(sort.label())
+                    .show_ui(ui, |ui| {
+                        for option in [
+                            crate::vst_catalog::VstSort::Name,
+                            crate::vst_catalog::VstSort::Type,
+                            crate::vst_catalog::VstSort::Category,
+                            crate::vst_catalog::VstSort::MidiFirst,
+                            crate::vst_catalog::VstSort::Manual,
+                        ] {
+                            ui.selectable_value(&mut sort, option, option.label());
+                        }
+                    });
+            });
+            if sort != saved_sort {
+                *shared.vst_sort.lock() = sort;
+            }
+            sort_vst_plugins(&mut plugins, sort);
+            let total_plugins = plugins.len();
+
+            let query = file_ui.plugin_search.trim().to_ascii_lowercase();
+            let visible_indices = plugins
+                .iter()
+                .enumerate()
+                .filter_map(|(index, plugin)| {
+                    plugin_matches_search(plugin, &query).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            ui.small(format!(
+                "Showing {} of {}. VST3 categories are grouped below; your MIDI tags are marked separately.",
+                visible_indices.len(),
+                plugins.len()
+            ));
+            let targets = plugins
+                .iter()
+                .filter(|plugin| plugin.instrument)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut directory_changed = sort != saved_sort;
+            let mut reorder = None;
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if plugins.is_empty() {
+                        ui.colored_label(Color32::LIGHT_BLUE, &plugin_message);
+                        ui.small("After scanning, open this list to browse all found instruments and effects.");
+                    } else if visible_indices.is_empty() {
+                        ui.label("No plugins match that search.");
+                    } else if matches!(
+                        sort,
+                        crate::vst_catalog::VstSort::Manual
+                            | crate::vst_catalog::VstSort::MidiFirst
+                    ) {
+                        let can_reorder = sort == crate::vst_catalog::VstSort::Manual
+                            && query.is_empty();
+                        for &index in &visible_indices {
+                            draw_plugin_row(
+                                ui,
+                                &mut plugins[index],
+                                &targets,
+                                index,
+                                total_plugins,
+                                sort,
+                                can_reorder,
+                                &mut directory_changed,
+                                &mut reorder,
+                                &mut close_after_insert,
+                                file_ui,
+                            );
+                        }
+                        if sort == crate::vst_catalog::VstSort::Manual && !query.is_empty() {
+                            ui.small("Clear the search to rearrange the full manual list.");
+                        }
+                    } else {
+                        let mut groups =
+                            std::collections::BTreeMap::<
+                                String,
+                                std::collections::BTreeMap<String, Vec<usize>>,
+                            >::new();
+                        for &index in &visible_indices {
+                            let (type_group, category_group) =
+                                plugin_category_group(&plugins[index]);
+                            groups
+                                .entry(type_group)
+                                .or_default()
+                                .entry(category_group)
+                                .or_default()
+                                .push(index);
+                        }
+                        for (type_group, categories) in groups {
+                            let group_count = categories.values().map(Vec::len).sum::<usize>();
+                            egui::CollapsingHeader::new(format!(
+                                "{type_group} ({group_count})"
+                            ))
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                for (category, indices) in categories {
+                                    egui::CollapsingHeader::new(format!(
+                                        "{category} ({})",
+                                        indices.len()
+                                    ))
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        for index in indices {
+                                            draw_plugin_row(
+                                                ui,
+                                                &mut plugins[index],
+                                                &targets,
+                                                index,
+                                                total_plugins,
+                                                sort,
+                                                false,
+                                                &mut directory_changed,
+                                                &mut reorder,
+                                                &mut close_after_insert,
+                                                file_ui,
+                                            );
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    }
+
+                    if let Some((index, direction)) = reorder {
+                        let next = if direction < 0 {
+                            index.saturating_sub(1)
+                        } else {
+                            (index + 1).min(plugins.len().saturating_sub(1))
+                        };
+                        if next != index {
+                            plugins.swap(index, next);
+                            for (position, plugin) in plugins.iter_mut().enumerate() {
+                                plugin.order = position as u64 * 1024;
+                            }
+                            directory_changed = true;
+                        }
+                    }
+                });
+
+            if directory_changed {
+                *shared.vst_plugins.lock() = plugins.clone();
+                if let Err(error) = save_plugin_directory(sort, &plugins) {
+                    file_ui.message = error;
+                }
+            }
+        });
+    file_ui.plugin_directory_open = open && !close_after_insert;
+}
+
+fn draw_plugin_row(
+    ui: &mut egui::Ui,
+    plugin: &mut crate::engine::VstPluginEntry,
+    targets: &[crate::engine::VstPluginEntry],
+    index: usize,
+    total: usize,
+    sort: crate::vst_catalog::VstSort,
+    can_reorder: bool,
+    directory_changed: &mut bool,
+    reorder: &mut Option<(usize, i8)>,
+    close_after_insert: &mut bool,
+    file_ui: &mut ScoreFileUi,
+) {
+    ui.group(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(plugin_display_label(plugin));
+            ui.small(if plugin.instrument {
+                "Instrument"
+            } else {
+                "Effect / processor"
+            });
+            if plugin.midi_source {
+                ui.small("MIDI");
+            }
+        });
+        let vendor = if plugin.vendor.is_empty() {
+            "Vendor unavailable"
+        } else {
+            &plugin.vendor
+        };
+        let category = if plugin.categories.is_empty() {
+            "VST3 category unavailable"
+        } else {
+            &plugin.categories
+        };
+        ui.small(format!("{vendor} · {category}"));
+        ui.horizontal_wrapped(|ui| {
+            let insert_label = if plugin.instrument {
+                "Insert instrument"
+            } else {
+                "Insert effect"
+            };
+            if ui.small_button(insert_label).clicked() {
+                file_ui.pending_insert = Some(plugin_example(&plugin.name, plugin.instrument));
+                *close_after_insert = true;
+            }
+            ui.menu_button("MIDI source", |ui| {
+                ui.small("For a plugin that outputs MIDI; the tag is optional.");
+                if ui.button("Route to Rustel sine").clicked() {
+                    file_ui.pending_insert =
+                        Some(plugin_midi_example(&plugin.name, plugin.instrument, None));
+                    *close_after_insert = true;
+                    ui.close_menu();
+                }
+                for target in targets {
+                    if ui.button(format!("Route to {}", target.name)).clicked() {
+                        file_ui.pending_insert = Some(plugin_midi_example(
+                            &plugin.name,
+                            plugin.instrument,
+                            Some(&target.name),
+                        ));
+                        *close_after_insert = true;
+                        ui.close_menu();
+                    }
+                }
+            });
+            if can_reorder && sort == crate::vst_catalog::VstSort::Manual {
+                ui.add_enabled_ui(index > 0, |ui| {
+                    if ui.small_button("↑").clicked() {
+                        *reorder = Some((index, -1));
+                    }
+                });
+                ui.add_enabled_ui(index + 1 < total, |ui| {
+                    if ui.small_button("↓").clicked() {
+                        *reorder = Some((index, 1));
+                    }
+                });
+            }
+        });
+        ui.collapsing("Edit label and MIDI tag", |ui| {
+            let mut label = plugin.display_label.clone();
+            let response = ui.add(
+                TextEdit::singleline(&mut label)
+                    .id(egui::Id::new(("rustel-vst-label", plugin.key.clone())))
+                    .hint_text("Optional display label"),
+            );
+            if response.changed() {
+                plugin.display_label = label;
+                *directory_changed = true;
+            }
+            let mut midi_source = plugin.midi_source;
+            if ui
+                .checkbox(&mut midi_source, "MIDI output usable")
+                .changed()
+            {
+                plugin.midi_source = midi_source;
+                *directory_changed = true;
+            }
+            ui.small("The MIDI tag is your note; it does not test or change the plugin.");
+        });
+    });
+}
+
+fn plugin_matches_search(plugin: &crate::engine::VstPluginEntry, query: &str) -> bool {
+    query.is_empty()
+        || [
+            plugin_display_label(plugin),
+            &plugin.name,
+            &plugin.vendor,
+            &plugin.categories,
+            if plugin.instrument {
+                "instrument"
+            } else {
+                "effect processor"
+            },
+            if plugin.midi_source {
+                "MIDI usable"
+            } else {
+                ""
+            },
+        ]
+        .iter()
+        .any(|field| field.to_ascii_lowercase().contains(query))
+}
+
+fn plugin_category_group(plugin: &crate::engine::VstPluginEntry) -> (String, String) {
+    let type_group = if plugin.instrument {
+        "Instruments"
+    } else {
+        "Effects / processors"
+    };
+    let parts = plugin
+        .categories
+        .split('|')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let subcategory = match parts.as_slice() {
+        [] => "Uncategorized".to_owned(),
+        [only] => (*only).to_owned(),
+        [_, rest @ ..] => rest.join(" / "),
+    };
+    (type_group.to_owned(), subcategory)
 }
 
 fn sort_vst_plugins(
@@ -647,7 +797,10 @@ fn start_folder_picker(file_ui: &mut ScoreFileUi) {
 
 #[cfg(test)]
 mod vst_code_generation_tests {
-    use super::{insert_code_at_char_range, plugin_example, plugin_midi_example, sort_vst_plugins};
+    use super::{
+        insert_code_at_char_range, plugin_category_group, plugin_example, plugin_matches_search,
+        plugin_midi_example, sort_vst_plugins,
+    };
     use crate::{engine::VstPluginEntry, vst_catalog::VstSort};
 
     #[test]
@@ -707,6 +860,27 @@ mod vst_code_generation_tests {
 
         sort_vst_plugins(&mut plugins, VstSort::Manual);
         assert_eq!(plugins[0].key, "a");
+    }
+
+    #[test]
+    fn directory_search_finds_labels_vendors_and_vst3_subcategories() {
+        let synth = VstPluginEntry {
+            key: "synth".into(),
+            name: "Super Synth".into(),
+            vendor: "Audio Co".into(),
+            categories: "Instrument|Synth".into(),
+            instrument: true,
+            display_label: "My Keys".into(),
+            midi_source: true,
+            order: 0,
+        };
+        assert!(plugin_matches_search(&synth, "my keys"));
+        assert!(plugin_matches_search(&synth, "audio co"));
+        assert!(plugin_matches_search(&synth, "midi"));
+        assert_eq!(
+            plugin_category_group(&synth),
+            ("Instruments".into(), "Synth".into())
+        );
     }
 }
 
