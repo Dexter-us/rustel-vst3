@@ -42,6 +42,45 @@ pub struct MidiOutputEvent {
     pub is_note_on: bool,
 }
 
+/// A live VST3 instrument that accepts raw MIDI note events.
+pub struct LiveMidiInsert {
+    copy: Box<Instance>,
+}
+
+impl LiveMidiInsert {
+    pub fn note_on(
+        &mut self,
+        channel: u8,
+        pitch: u8,
+        velocity: f32,
+        frame_offset: u32,
+    ) -> bool {
+        self.copy
+            .queue_live_midi(channel, pitch, velocity, frame_offset, true)
+    }
+
+    pub fn note_off(&mut self, channel: u8, pitch: u8, frame_offset: u32) -> bool {
+        self.copy
+            .queue_live_midi(channel, pitch, 0.0, frame_offset, false)
+    }
+
+    pub fn sync(&mut self, beats: f64, tempo: f32, frames: u32) {
+        self.copy.sync(beats, tempo, frames);
+    }
+
+    pub fn submit(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.copy.submit(left, right);
+    }
+
+    pub fn collect(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.copy.collect(left, right);
+    }
+
+    pub fn reset(&mut self) {
+        self.copy.reset();
+    }
+}
+
 /// Shared capture state; disabled during ordinary live processing.
 #[derive(Clone, Default)]
 pub(crate) struct MidiCapture {
@@ -3346,6 +3385,55 @@ impl Host {
         if !wait {
             return None;
         }
+        Self::wait_for(finished);
+        take(&mut self.state())
+    }
+
+    /// Builds a live instrument copy that can receive raw MIDI note events.
+    /// Call this off the audio thread; the returned copy can process blocks
+    /// on the audio thread.
+    pub fn insert_live_midi(
+        &self,
+        key: InsertKey,
+        sample_rate: u32,
+        slot: InsertSlot,
+    ) -> Option<LiveMidiInsert> {
+        let build = (key, sample_rate, slot);
+        let take = |state: &mut State| {
+            state.rendering.remove(&build);
+            match state.builds.remove(&build) {
+                Some(Build::Ready(mut copy)) => {
+                    copy.set_any_thread(!state.on_audio_thread(key.plugin));
+                    state.took(copy.cell(), false);
+                    state.replace.retain(|pair| *pair != (slot, key));
+                    self.set_replacing(state);
+                    Some(LiveMidiInsert { copy })
+                }
+                Some(other) => {
+                    state.builds.insert(build, other);
+                    None
+                }
+                None => None,
+            }
+        };
+
+        let finished = {
+            let mut state = self.state();
+            if let Some(found) = state.builds.get(&build) {
+                if found.runs() {
+                    drop(state);
+                    self.wait_idle();
+                    return take(&mut self.state());
+                }
+                return take(&mut state);
+            }
+            let claimed = Self::claim(&mut state, build, true)?;
+            state.rendering.insert(build);
+            let host = self.clone();
+            self.enqueue(move || {
+                host.finish(build, claimed, None);
+            })
+        };
         Self::wait_for(finished);
         take(&mut self.state())
     }

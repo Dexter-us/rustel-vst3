@@ -18,7 +18,7 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 - Scan the standard Windows VST3 folders and browse to add extra plugin folders without changing Windows environment settings. The bundled scan helper runs without a console window.
 - Accept DAW MIDI note-on/off and velocity input; MIDI notes use the first basic oscillator sound in the active score.
 - Capture note-on/off and velocity from hosted VST3 MIDI generators/processors and route phrase-rendered output to Rustel synths, samples, wavetables, KabelSalat graphs, Csound instruments, or hosted VSTi plugins.
-- Open a free-running MIDI VST3 generator in the separate `RustelMidiHost.exe` companion window and stream its notes live to a Rustel synth node in Patch.
+- Open a free-running MIDI VST3 generator in the separate `RustelMidiHost.exe` companion window and stream its notes live to a Rustel synth or any scanned VSTi instrument in Patch.
 - Play stereo audio following DAW play/stop, tempo, song position, and loop jumps.
 - Select **1–64 phrase cycles** and **1–16 quarter-note beats per cycle**. Defaults: 16 cycles, four beats per cycle.
 - Save the draft, last accepted score, phrase settings, gain, transport options, and window state inside the DAW project.
@@ -71,9 +71,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.14 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.14.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.14 --release --locked
+cargo build --package rustel-vst3@0.1.15 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.15.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.15 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -118,7 +118,7 @@ Add an effect by chaining `.vst("Effect Name")` after the sound or instrument. E
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
 
-The editor header shows the plugin version, such as **v0.1.14**. Use that label to distinguish this build from older downloads.
+The editor header shows the plugin version, such as **v0.1.15**. Use that label to distinguish this build from older downloads.
 
 ## Visual patch editor
 

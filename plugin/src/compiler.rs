@@ -24,6 +24,33 @@ pub struct PreparedMidiEvent {
     pub is_note_on: bool,
 }
 
+pub enum LiveVstiCommand<'a> {
+    NoteOn {
+        channel: u8,
+        note: u8,
+        velocity: f32,
+        frame_offset: u32,
+    },
+    NoteOff {
+        channel: u8,
+        note: u8,
+        frame_offset: u32,
+    },
+    Submit {
+        left: &'a mut [f32],
+        right: &'a mut [f32],
+        beats: f64,
+        tempo: f32,
+    },
+    Collect {
+        left: &'a mut [f32],
+        right: &'a mut [f32],
+    },
+    Reset,
+}
+
+pub type LiveVstiProcessor = Box<dyn for<'a> FnMut(LiveVstiCommand<'a>) -> bool + Send>;
+
 pub struct PreparedPlan {
     pub backend: ScalarBackend,
     pub notes: Vec<PreparedNote>,
@@ -33,6 +60,7 @@ pub struct PreparedPlan {
     pub requires_csound: bool,
     pub rendered_source: Option<&'static str>,
     pub live_midi_plugin: Option<String>,
+    pub live_vsti: Option<LiveVstiProcessor>,
     pub period_beats: f64,
     pub rendered_bpm: f64,
     pub sample_rate: u32,
@@ -430,6 +458,89 @@ fn close_midi_notes_at_phrase_end(events: &mut Vec<PreparedMidiEvent>, phrase_fr
     events.sort_by_key(|event| (event.frame, event.is_note_on));
 }
 
+fn prepare_live_vsti_target(
+    target_name: &str,
+    sample_rate: u32,
+    cancelled: &AtomicBool,
+) -> Result<LiveVstiProcessor, String> {
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Score evaluation was cancelled.".into());
+    }
+    let host = rustel_runtime::vst::host();
+    match host.resolve(target_name, true) {
+        rustel_runtime::vst::Resolved::Ready(_, plugin) if plugin.is_instrument() => {}
+        rustel_runtime::vst::Resolved::Ready(_, _) => {
+            return Err(format!(
+                "{target_name} is an effect; live MIDI targets must be VSTi instruments."
+            ));
+        }
+        rustel_runtime::vst::Resolved::Pending => {
+            return Err(format!(
+                "{target_name} is still loading; evaluate the score again."
+            ));
+        }
+        rustel_runtime::vst::Resolved::Missing => {
+            return Err(format!("No VST3 instrument has the name '{target_name}'."));
+        }
+        rustel_runtime::vst::Resolved::Failed(reason) => {
+            return Err(format!("{target_name} did not load: {reason}"));
+        }
+    }
+
+    let key = match host
+        .key(target_name, None, true)
+        .map_err(|error| error.to_string())?
+    {
+        Some((key, _)) => key,
+        None => {
+            host.wait_idle();
+            host.key(target_name, None, true)
+                .map_err(|error| error.to_string())?
+                .map(|(key, _)| key)
+                .ok_or_else(|| format!("{target_name} is not ready to receive live MIDI."))?
+        }
+    };
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Score evaluation was cancelled.".into());
+    }
+    let slot = InsertSlot::instrument(MIDI_TARGET_CHAIN.fetch_add(1, Ordering::Relaxed));
+    let mut instrument = host
+        .insert_live_midi(key, sample_rate, slot)
+        .ok_or_else(|| format!("Could not prepare live VSTi target {target_name}."))?;
+
+    Ok(Box::new(move |command| match command {
+        LiveVstiCommand::NoteOn {
+            channel,
+            note,
+            velocity,
+            frame_offset,
+        } => instrument.note_on(channel, note, velocity, frame_offset),
+        LiveVstiCommand::NoteOff {
+            channel,
+            note,
+            frame_offset,
+        } => instrument.note_off(channel, note, frame_offset),
+        LiveVstiCommand::Submit {
+            left,
+            right,
+            beats,
+            tempo,
+        } => {
+            instrument.sync(beats, tempo, 0);
+            instrument.submit(left, right);
+            true
+        }
+        LiveVstiCommand::Collect { left, right } => {
+            instrument.collect(left, right);
+            true
+        }
+        LiveVstiCommand::Reset => {
+            instrument.reset();
+            true
+        }
+    }))
+}
+
 fn render_midi_to_vsti(
     target_name: &str,
     events: &[PreparedMidiEvent],
@@ -570,15 +681,6 @@ pub fn compile(
         return Err("A MIDI target needs a hosted VST3 MIDI source in the score.".into());
     }
     if let Some(source_name) = live_source {
-        if !matches!(midi_target.as_ref(), Some(HostedMidiTarget::Rustel(_))) {
-            return Err(
-                "Live MIDI streaming currently needs a Rustel synth target. Connect a Note Pattern to use other instrument types."
-                    .into(),
-            );
-        }
-        let Some(HostedMidiTarget::Rustel(synth)) = midi_target else {
-            unreachable!("live MIDI target was checked above");
-        };
         let period_beats = f64::from(cycles * beats_per_cycle);
         if !period_beats.is_finite()
             || period_beats <= 0.0
@@ -590,6 +692,23 @@ pub fn compile(
                 "Live MIDI playback needs a valid tempo, phrase length, and sample rate.".into(),
             );
         }
+        let (synth, live_vsti) = match midi_target {
+            Some(HostedMidiTarget::Rustel(synth)) => (synth, None),
+            Some(HostedMidiTarget::Vsti(target_name)) => {
+                crate::portable_vst::configure(vst3_folders, cancelled)?;
+                let live_vsti = prepare_live_vsti_target(&target_name, sample_rate, cancelled)?;
+                (RustelMidiSynth::Sine, Some(live_vsti))
+            }
+            Some(_) => {
+                return Err(
+                    "Free-running MIDI can target a Rustel synth or a hosted VSTi. Connect one of those instrument types."
+                        .into(),
+                );
+            }
+            None => {
+                return Err("Choose a Rustel synth or hosted VSTi as the live MIDI target.".into());
+            }
+        };
         return Ok(Box::new(PreparedPlan {
             backend: ScalarBackend::prepared(sample_rate, 64)?,
             notes: Vec::new(),
@@ -599,6 +718,7 @@ pub fn compile(
             requires_csound: false,
             rendered_source: Some("Free-running MIDI VST3"),
             live_midi_plugin: Some(source_name.clone()),
+            live_vsti,
             period_beats,
             rendered_bpm: bpm,
             sample_rate,
@@ -800,6 +920,7 @@ pub fn compile(
                 _ => "Csound-rendered phrase",
             }),
             live_midi_plugin: None,
+            live_vsti: None,
             period_beats,
             rendered_bpm: bpm,
             sample_rate,
@@ -870,6 +991,7 @@ pub fn compile(
         requires_csound: false,
         rendered_source: None,
         live_midi_plugin: None,
+        live_vsti: None,
         period_beats,
         rendered_bpm: bpm,
         sample_rate,
@@ -964,7 +1086,7 @@ mod midi_routing_tests {
             Err(error) => error,
             Ok(_) => panic!("live sample target should be rejected"),
         };
-        assert!(error.contains("Rustel synth target"));
+        assert!(error.contains("Rustel synth or a hosted VSTi"));
     }
 
     #[test]

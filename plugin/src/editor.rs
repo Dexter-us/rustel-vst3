@@ -231,7 +231,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                         );
                     }
                 });
-                ui.small("Score-based VST3 phrases repeat; free-running MIDI sources stream into Rustel synths.");
+                ui.small("Score-based MIDI phrases repeat; free-running MIDI sources can stream into Rustel synths or hosted VSTi instruments.");
                 ui.small("DAW MIDI uses the score's first oscillator sound, or sine by default.");
                 ui.add_space(6.0);
             });
@@ -1306,7 +1306,7 @@ fn draw_patch_node_fields(
                 ui.small("The connected Note Pattern drives this MIDI processor.");
             } else {
                 ui.small("Leave the MIDI input unconnected to run a free-running generator.");
-                ui.small("Live streaming currently targets Rustel synths; connect a pattern for other targets.");
+                ui.small("Connect the MIDI source to a Rustel synth or scanned VSTi instrument.");
                 ui.small("The VST editor opens by itself; streaming starts automatically.");
                 if ui.button("Open MIDI VST editor").clicked() {
                     let entry = shared
@@ -1319,7 +1319,7 @@ fn draw_patch_node_fields(
                         Some(entry) => match shared.open_live_midi_editor(&entry) {
                             Ok(()) => {
                                 *patch_message =
-                                    "The MIDI VST editor opened and is streaming to the Rustel synth. Close it to stop.".into();
+                                    "The MIDI VST editor opened and is streaming to the connected instrument. Close it to stop.".into();
                             }
                             Err(error) => *patch_message = error,
                         },

@@ -1131,6 +1131,45 @@ mod tests {
     }
 
     #[test]
+    fn free_running_midi_source_can_target_a_hosted_vsti() {
+        let mut graph = PatchGraph::default();
+        graph.nodes.clear();
+        graph.connections.clear();
+        let source = graph
+            .add_node(
+                PatchNodeKind::MidiVst {
+                    plugin: "Logo MIDI".into(),
+                    is_effect: true,
+                },
+                [20.0, 24.0],
+            )
+            .expect("MIDI VST");
+        let target = graph
+            .add_node(
+                PatchNodeKind::Instrument {
+                    instrument: InstrumentKind::Vsti,
+                    value: "Mercury-4".into(),
+                    orc_file: None,
+                },
+                [220.0, 24.0],
+            )
+            .expect("VSTi instrument");
+        let output = graph
+            .add_node(PatchNodeKind::Output, [420.0, 24.0])
+            .expect("output");
+        graph.connect(source, target).expect("MIDI VST to VSTi");
+        graph.connect(target, output).expect("VSTi to output");
+
+        let code = graph
+            .generate_code_with_orchestra_root("")
+            .expect("free-running MIDI to VSTi generates");
+        assert!(code.contains("// LIVE MIDI SOURCE: \"Logo MIDI\""));
+        assert!(code.contains("// MIDI target: vsti \"Mercury-4\""));
+        assert!(!code.contains(".vst(\"Logo MIDI\")"));
+        assert!(!code.contains("note(\"c3 e3 g3\")"));
+    }
+
+    #[test]
     fn hosted_midi_can_target_every_supported_instrument_family() {
         let targets = [
             (InstrumentKind::RustelSynth, "sine", "rustel \"sine\""),

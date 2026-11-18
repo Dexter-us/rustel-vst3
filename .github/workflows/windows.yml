@@ -34,16 +34,16 @@ jobs:
       - name: Run focused checks
         run: cargo test --workspace --locked -- --test-threads=1
       - name: Build the uniquely selected plugin library
-        run: cargo build --package rustel-vst3@0.1.14 --release --locked
+        run: cargo build --package rustel-vst3@0.1.15 --release --locked
       - name: Prepare the NIH bundler library path
         shell: pwsh
         run: |
           Copy-Item target/release/rustel_vst3.dll `
-            'target/release/rustel_vst3@0.1.14.dll' -Force
+            'target/release/rustel_vst3@0.1.15.dll' -Force
       - name: Build the Windows x64 VST3 bundle
-        run: cargo xtask bundle rustel-vst3@0.1.14 --release --locked
+        run: cargo xtask bundle rustel-vst3@0.1.15 --release --locked
       - name: Build the VST3 scan helper
-        run: cargo build --package rustel-vst3@0.1.14 --bin rustel-vst-worker --release --locked
+        run: cargo build --package rustel-vst3@0.1.15 --bin rustel-vst-worker --release --locked
       - name: Configure the MIDI VST3 host helper
         run: cmake -S midi-host -B midi-host/build -A x64
       - name: Build the MIDI VST3 host helper

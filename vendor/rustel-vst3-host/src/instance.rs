@@ -35,6 +35,7 @@ const OUTPUT: BusDirection = BusDirections_::kOutput as BusDirection;
 const DEFAULT_TEMPO: f64 = 120.0;
 /// The notes one plugin holds at one time: one for each key.
 pub(crate) const MAX_NOTES: usize = 128;
+const MAX_LIVE_MIDI_EVENTS: usize = 128;
 // One block carries the start and the end of each note at most. The event
 // list has room for all of them: a lost end is a note that does not stop.
 const _: () = assert!(MAX_EVENTS >= 2 * MAX_NOTES);
@@ -76,6 +77,44 @@ struct HeldNote {
     tuning: f32,
     velocity: f32,
     started: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RawMidiInput {
+    channel: u8,
+    pitch: u8,
+    velocity: f32,
+    frame_offset: u32,
+    is_note_on: bool,
+}
+
+impl RawMidiInput {
+    fn event(self, offset: i64, beats: f64) -> Event {
+        let mut event: Event = unsafe { std::mem::zeroed() };
+        event.sampleOffset = offset.max(0) as i32;
+        event.ppqPosition = beats;
+        if self.is_note_on {
+            event.r#type = Event_::EventTypes_::kNoteOnEvent as u16;
+            event.__field0.noteOn = NoteOnEvent {
+                channel: self.channel as i16,
+                pitch: self.pitch as i16,
+                tuning: 0.0,
+                velocity: self.velocity,
+                length: 0,
+                noteId: -1,
+            };
+        } else {
+            event.r#type = Event_::EventTypes_::kNoteOffEvent as u16;
+            event.__field0.noteOff = NoteOffEvent {
+                channel: self.channel as i16,
+                pitch: self.pitch as i16,
+                velocity: 0.0,
+                noteId: -1,
+                tuning: 0.0,
+            };
+        }
+        event
+    }
 }
 
 impl HeldNote {
@@ -664,6 +703,8 @@ impl Loaded {
             changes: Changes::new(),
             events: Events::new(),
             output_events: Events::new(),
+            live_midi_events: [RawMidiInput::default(); MAX_LIVE_MIDI_EVENTS],
+            live_midi_event_count: 0,
             notes: [HeldNote::default(); MAX_NOTES],
             note_count: 0,
             cut_at: None,
@@ -826,6 +867,8 @@ pub(crate) struct Instance {
     changes: ComWrapper<Changes>,
     events: ComWrapper<Events>,
     output_events: ComWrapper<Events>,
+    live_midi_events: [RawMidiInput; MAX_LIVE_MIDI_EVENTS],
+    live_midi_event_count: usize,
     notes: [HeldNote; MAX_NOTES],
     note_count: usize,
     /// A rewind ends each note at this frame count of the instance.
@@ -1110,6 +1153,34 @@ impl Instance {
         self.any_thread = any_thread;
     }
 
+    pub(crate) fn queue_live_midi(
+        &mut self,
+        channel: u8,
+        pitch: u8,
+        velocity: f32,
+        frame_offset: u32,
+        is_note_on: bool,
+    ) -> bool {
+        if channel > 15
+            || pitch > 127
+            || !velocity.is_finite()
+            || !(0.0..=1.0).contains(&velocity)
+            || self.live_midi_event_count == MAX_LIVE_MIDI_EVENTS
+        {
+            self.state.lost_notes.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        self.live_midi_events[self.live_midi_event_count] = RawMidiInput {
+            channel,
+            pitch,
+            velocity,
+            frame_offset,
+            is_note_on,
+        };
+        self.live_midi_event_count += 1;
+        true
+    }
+
     fn channel(&mut self, channel: usize, frames: usize) -> &mut [f32] {
         unsafe { std::slice::from_raw_parts_mut(self.channels[channel], frames) }
     }
@@ -1144,6 +1215,15 @@ impl Instance {
                 at += 1;
             }
         }
+        let live_count = self.live_midi_event_count;
+        for input in self.live_midi_events[..live_count].iter().copied() {
+            let offset = input.frame_offset.min(frames.saturating_sub(1) as u32);
+            let event = input.event(i64::from(offset), position(now + i64::from(offset)));
+            if !self.events.push(event) {
+                self.state.lost_notes.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.live_midi_event_count = 0;
         self.events.sort();
         if self.cut_at.is_some_and(|cut| cut < end) {
             self.cut_at = None;
@@ -1740,6 +1820,38 @@ fn silence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_midi_events_keep_channel_pitch_and_sample_position() {
+        let on = RawMidiInput {
+            channel: 2,
+            pitch: 67,
+            velocity: 0.75,
+            frame_offset: 0,
+            is_note_on: true,
+        }
+        .event(7, 1.5);
+        assert_eq!(on.r#type, Event_::EventTypes_::kNoteOnEvent as u16);
+        assert_eq!(on.sampleOffset, 7);
+        let on = unsafe { on.__field0.noteOn };
+        assert_eq!(on.channel, 2);
+        assert_eq!(on.pitch, 67);
+        assert_eq!(on.velocity, 0.75);
+
+        let off = RawMidiInput {
+            channel: 2,
+            pitch: 67,
+            velocity: 0.0,
+            frame_offset: 0,
+            is_note_on: false,
+        }
+        .event(8, 1.6);
+        assert_eq!(off.r#type, Event_::EventTypes_::kNoteOffEvent as u16);
+        assert_eq!(off.sampleOffset, 8);
+        let off = unsafe { off.__field0.noteOff };
+        assert_eq!(off.channel, 2);
+        assert_eq!(off.pitch, 67);
+    }
 
     /// A copy of a test: the peak of each silent block by the number of
     /// the block, the counts of the flush, and the blocks and the restarts

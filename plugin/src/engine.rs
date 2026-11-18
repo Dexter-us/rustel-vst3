@@ -1,6 +1,10 @@
 use crate::live_midi::{LiveMidiBridge, LiveMidiEvent};
 use crate::vst_catalog::{VstCatalog, VstSort};
-use crate::{compiler, compiler::PreparedPlan, params::RustelParams};
+use crate::{
+    compiler,
+    compiler::{LiveVstiCommand, LiveVstiProcessor, PreparedPlan, RustelMidiSynth},
+    params::RustelParams,
+};
 use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::*;
 use parking_lot::Mutex;
@@ -326,6 +330,9 @@ impl Engine {
     pub fn reset(&mut self) {
         if let Some(plan) = &mut self.plan {
             plan.backend.reset_at(0);
+            if let Some(live_vsti) = plan.live_vsti.as_mut() {
+                live_vsti(LiveVstiCommand::Reset);
+            }
         }
         self.frame = 0;
         self.expected_beat = None;
@@ -355,6 +362,11 @@ impl Engine {
         if let Some(mut plan) = self.shared.ready.pop() {
             *self.shared.live_midi_plugin.lock() = plan.live_midi_plugin.clone();
             plan.backend.reset_at(self.frame);
+            if let Some(old) = self.plan.as_mut()
+                && let Some(live_vsti) = old.live_vsti.as_mut()
+            {
+                live_vsti(LiveVstiCommand::Reset);
+            }
             if let Some(backend) = &mut self.hosted_midi_backend {
                 backend.reset_at(self.frame);
             }
@@ -390,6 +402,14 @@ impl Engine {
             if let Some(backend) = &mut self.midi_backend {
                 backend.reset_at(self.frame);
             }
+            let live_vsti = self.plan.as_mut().and_then(|plan| plan.live_vsti.as_mut());
+            release_live_midi_notes(
+                &mut self.live_midi_notes,
+                &mut self.hosted_midi_backend,
+                live_vsti,
+                self.frame,
+                &self.shared.refused,
+            );
         }
         self.was_enabled = enabled;
         let start_beat = if follow {
@@ -448,6 +468,10 @@ impl Engine {
             .plan
             .as_ref()
             .is_some_and(|plan| plan.live_midi_plugin.is_some());
+        let live_vsti_enabled = self
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.live_vsti.is_some());
         let live_midi_connected = self
             .shared
             .live_midi
@@ -455,21 +479,14 @@ impl Engine {
             .is_some_and(LiveMidiBridge::is_connected)
             && live_midi_enabled;
         if self.live_midi_connected && !live_midi_connected {
-            for (channel, notes) in self.live_midi_notes.iter_mut().enumerate() {
-                for (note, active) in notes.iter_mut().enumerate() {
-                    if *active
-                        && !queue_midi_release(
-                            &mut self.hosted_midi_backend,
-                            channel as u8,
-                            note as u8,
-                            self.frame,
-                        )
-                    {
-                        self.shared.refused.fetch_add(1, Ordering::Relaxed);
-                    }
-                    *active = false;
-                }
-            }
+            let live_vsti = self.plan.as_mut().and_then(|plan| plan.live_vsti.as_mut());
+            release_live_midi_notes(
+                &mut self.live_midi_notes,
+                &mut self.hosted_midi_backend,
+                live_vsti,
+                self.frame,
+                &self.shared.refused,
+            );
         }
         self.live_midi_connected = live_midi_connected;
         while offset < count {
@@ -477,35 +494,31 @@ impl Engine {
             let mut pcm = [0.0_f32; 128];
             let mut midi_pcm = [0.0_f32; 128];
             let mut hosted_midi_pcm = [0.0_f32; 128];
+            let mut live_vsti_pcm = [0.0_f32; 128];
+            let mut live_vsti_left = [0.0_f32; 64];
+            let mut live_vsti_right = [0.0_f32; 64];
             let block_end = offset + frames;
+            let mut source_midi_sample_offset = 0u32;
             if let Some(bridge) = &self.shared.live_midi {
                 while let Some(event) = bridge.pop() {
                     if !live_midi_enabled {
                         continue;
                     }
                     let event_frame = self.frame + offset as u64;
-                    let queued = match event {
-                        LiveMidiEvent::NoteOn {
-                            channel,
-                            note,
-                            velocity,
-                        } if enabled && velocity.is_finite() && velocity > 0.0 => queue_midi_note(
-                            &mut self.hosted_midi_backend,
-                            channel,
-                            note,
-                            velocity.clamp(0.0, 1.0),
-                            event_frame,
-                            midi_style,
-                            Some(hosted_midi_synth),
-                        ),
-                        LiveMidiEvent::NoteOn { channel, note, .. }
-                        | LiveMidiEvent::NoteOff { channel, note } => queue_midi_release(
-                            &mut self.hosted_midi_backend,
-                            channel,
-                            note,
-                            event_frame,
-                        ),
-                    };
+                    let frame_offset =
+                        source_midi_sample_offset.min(frames.saturating_sub(1) as u32);
+                    source_midi_sample_offset = source_midi_sample_offset.saturating_add(1);
+                    let live_vsti = self.plan.as_mut().and_then(|plan| plan.live_vsti.as_mut());
+                    let queued = route_live_midi_event(
+                        event,
+                        enabled,
+                        event_frame,
+                        frame_offset,
+                        &mut self.hosted_midi_backend,
+                        live_vsti,
+                        midi_style,
+                        hosted_midi_synth,
+                    );
                     if queued {
                         match event {
                             LiveMidiEvent::NoteOn {
@@ -565,6 +578,24 @@ impl Engine {
                         }
                     }
                 }
+            }
+            let vsti_submitted = if live_vsti_enabled {
+                self.plan
+                    .as_mut()
+                    .and_then(|plan| plan.live_vsti.as_mut())
+                    .is_some_and(|processor| {
+                        processor(LiveVstiCommand::Submit {
+                            left: &mut live_vsti_left[..frames],
+                            right: &mut live_vsti_right[..frames],
+                            beats: start_beat + offset as f64 * beats_per_frame,
+                            tempo: bpm as f32,
+                        })
+                    })
+            } else {
+                false
+            };
+            if live_vsti_enabled && !vsti_submitted {
+                self.shared.refused.fetch_add(1, Ordering::Relaxed);
             }
             if let Some(plan) = &mut self.plan {
                 if plan.sample_rate == self.sample_rate.round() as u32 {
@@ -647,6 +678,21 @@ impl Engine {
             if let Some(backend) = &mut self.hosted_midi_backend {
                 backend.process_block(&mut hosted_midi_pcm[..frames * 2], frames);
             }
+            if vsti_submitted {
+                if let Some(processor) = self.plan.as_mut().and_then(|plan| plan.live_vsti.as_mut())
+                    && processor(LiveVstiCommand::Collect {
+                        left: &mut live_vsti_left[..frames],
+                        right: &mut live_vsti_right[..frames],
+                    })
+                {
+                    for index in 0..frames {
+                        live_vsti_pcm[index * 2] = live_vsti_left[index];
+                        live_vsti_pcm[index * 2 + 1] = live_vsti_right[index];
+                    }
+                } else {
+                    self.shared.refused.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             for index in 0..frames {
                 let target = if playing { 1.0 } else { 0.0 };
                 let step = (self.sample_rate * 0.005).recip() as f32;
@@ -657,8 +703,9 @@ impl Engine {
                 for channel in 0..channels.len() {
                     let value = pcm[index * 2 + channel.min(1)] * (gain * self.gate)
                         + midi_pcm[index * 2 + channel.min(1)] * (gain * self.midi_gate);
-                    let value =
-                        value + hosted_midi_pcm[index * 2 + channel.min(1)] * (gain * self.gate);
+                    let value = value
+                        + hosted_midi_pcm[index * 2 + channel.min(1)] * (gain * self.gate)
+                        + live_vsti_pcm[index * 2 + channel.min(1)] * (gain * self.midi_gate);
                     // Contain a failed DSP voice instead of passing NaN to a DAW.
                     let value = if value.is_finite() { value } else { 0.0 };
                     channels[channel][offset + index] = value;
@@ -673,6 +720,84 @@ impl Engine {
         self.was_playing = playing;
         self.frame = self.frame.saturating_add(count as u64);
         self.shared.peak.store(peak, Ordering::Relaxed);
+    }
+}
+
+fn route_live_midi_event(
+    event: LiveMidiEvent,
+    enabled: bool,
+    frame: u64,
+    frame_offset: u32,
+    backend: &mut Option<ScalarBackend>,
+    live_vsti: Option<&mut LiveVstiProcessor>,
+    midi_style: (Waveform, Envelope),
+    synth: RustelMidiSynth,
+) -> bool {
+    match event {
+        LiveMidiEvent::NoteOn {
+            channel,
+            note,
+            velocity,
+        } if enabled && velocity.is_finite() && velocity > 0.0 => {
+            if let Some(processor) = live_vsti {
+                processor(LiveVstiCommand::NoteOn {
+                    channel,
+                    note,
+                    velocity: velocity.clamp(0.0, 1.0),
+                    frame_offset,
+                })
+            } else {
+                queue_midi_note(
+                    backend,
+                    channel,
+                    note,
+                    velocity.clamp(0.0, 1.0),
+                    frame,
+                    midi_style,
+                    Some(synth),
+                )
+            }
+        }
+        LiveMidiEvent::NoteOn { channel, note, .. } | LiveMidiEvent::NoteOff { channel, note } => {
+            if let Some(processor) = live_vsti {
+                processor(LiveVstiCommand::NoteOff {
+                    channel,
+                    note,
+                    frame_offset,
+                })
+            } else {
+                queue_midi_release(backend, channel, note, frame)
+            }
+        }
+    }
+}
+
+fn release_live_midi_notes(
+    notes: &mut [[bool; 128]; 16],
+    backend: &mut Option<ScalarBackend>,
+    live_vsti: Option<&mut LiveVstiProcessor>,
+    frame: u64,
+    refused: &AtomicU64,
+) {
+    let mut live_vsti = live_vsti;
+    for (channel, active_notes) in notes.iter_mut().enumerate() {
+        for (note, active) in active_notes.iter_mut().enumerate() {
+            if *active {
+                let queued = if let Some(processor) = live_vsti.as_deref_mut() {
+                    processor(LiveVstiCommand::NoteOff {
+                        channel: channel as u8,
+                        note: note as u8,
+                        frame_offset: 0,
+                    })
+                } else {
+                    queue_midi_release(backend, channel as u8, note as u8, frame)
+                };
+                if !queued {
+                    refused.fetch_add(1, Ordering::Relaxed);
+                }
+                *active = false;
+            }
+        }
     }
 }
 
@@ -958,6 +1083,67 @@ mod midi_tests {
         assert!(
             pcm.iter().any(|sample| sample.abs() > 0.001),
             "the second note should remain held"
+        );
+    }
+
+    #[test]
+    fn free_running_midi_routes_note_on_and_off_to_a_hosted_vsti() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let capture = Arc::clone(&received);
+        let mut processor: LiveVstiProcessor = Box::new(move |command| {
+            match command {
+                LiveVstiCommand::NoteOn {
+                    channel,
+                    note,
+                    velocity,
+                    frame_offset,
+                } => capture
+                    .lock()
+                    .push((true, channel, note, velocity, frame_offset)),
+                LiveVstiCommand::NoteOff {
+                    channel,
+                    note,
+                    frame_offset,
+                } => capture
+                    .lock()
+                    .push((false, channel, note, 0.0, frame_offset)),
+                _ => {}
+            }
+            true
+        });
+        let mut backend = None;
+        let style = (Waveform::Sine, Envelope::default());
+
+        assert!(route_live_midi_event(
+            LiveMidiEvent::NoteOn {
+                channel: 2,
+                note: 64,
+                velocity: 0.75,
+            },
+            true,
+            0,
+            3,
+            &mut backend,
+            Some(&mut processor),
+            style,
+            RustelMidiSynth::Sine,
+        ));
+        assert!(route_live_midi_event(
+            LiveMidiEvent::NoteOff {
+                channel: 2,
+                note: 64,
+            },
+            true,
+            64,
+            4,
+            &mut backend,
+            Some(&mut processor),
+            style,
+            RustelMidiSynth::Sine,
+        ));
+        assert_eq!(
+            *received.lock(),
+            vec![(true, 2, 64, 0.75, 3), (false, 2, 64, 0.0, 4)]
         );
     }
 }

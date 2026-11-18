@@ -192,7 +192,7 @@
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
-      <span class="badge">Version 0.1.14</span>
+      <span class="badge">Version 0.1.15</span>
       <span class="badge">Manufacturer: Dexter U.S.</span>
       <span class="badge">Csound 6.18.1 bundled</span>
     </div>
@@ -311,12 +311,12 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <p>The default patch is a note pattern connected to a Rustel synth and Audio output. Pattern-driven MIDI can feed one Rustel synth, sample, wavetable, KabelSalat graph, Csound instrument, or hosted VSTi target. The graph is saved in the DAW's plugin state. Generation is one-way: Rustel does not convert handwritten score code back into blocks.</p>
         <h3>Run a free-running MIDI VST3</h3>
         <ol>
-          <li>Add a MIDI VST3 source, leave its MIDI input unconnected, and connect it to a Rustel synth node.</li>
+          <li>Add a MIDI VST3 source, leave its MIDI input unconnected, and connect it to a Rustel synth or a scanned VSTi instrument.</li>
           <li>Click <strong>Generate Code</strong>, review the generated score, then press <strong>Evaluate</strong>.</li>
           <li>On the MIDI source block, click <strong>Open MIDI VST editor</strong>. Rustel opens the plugin's own editor in a separate window, not a helper control panel.</li>
-          <li>Adjust the plugin in its editor. MIDI streaming starts automatically when the editor opens; its note-on, note-off, and velocity events play the connected Rustel synth. Close the editor window to stop.</li>
+          <li>Adjust the plugin in its editor. MIDI streaming starts automatically when the editor opens; its note-on, note-off, and velocity events play the connected instrument. Close the editor window to stop.</li>
         </ol>
-        <p>This live mode currently supports Rustel synth targets only. Use a connected Note Pattern for samples, wavetables, KabelSalat, Csound, and hosted VSTi targets. The companion host has its own audio clock and does not follow the DAW's transport or tempo.</p>
+        <p>Free-running MIDI supports Rustel synths and scanned VSTi instruments as targets. Use a connected Note Pattern for samples, wavetables, KabelSalat, Csound, and other phrase-driven targets. The companion MIDI source has its own clock and does not follow the DAW's transport or tempo.</p>
         <p>For an ordinary audio-effect chain, connect a note pattern to an instrument, connect its audio output to a VST3 effect, then connect that effect to Audio output. The current renderer does not apply a downstream audio effect to the separately rendered branch from a hosted MIDI target.</p>
         <pre><code>(note("c3 e3 g3")).vsti("Your instrument").vst("Your effect", { mix: 0.5 })</code></pre>
         <p>Rustel hosts VST3, not VST2. Scanning runs in the scan helper process, but plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> and <code>RustelMidiHost.exe</code> beside the plugin bundle. The MIDI helper is a separate host for free-running generators; it is not a VST3 plugin.</p>
