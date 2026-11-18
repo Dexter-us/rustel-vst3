@@ -13,6 +13,7 @@ struct ScoreFileUi {
     dialog: Option<ScoreDialog>,
     folder_picker: Option<FolderPicker>,
     csound_editor: Option<CsoundSourceUi>,
+    vst_folders_loaded: bool,
 }
 
 struct FolderPicker {
@@ -76,6 +77,18 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
         },
         move |ctx, setter, file_ui| {
             ctx.request_repaint_after(Duration::from_millis(50));
+            if !file_ui.vst_folders_loaded {
+                file_ui.vst_folders_loaded = true;
+                let current = params.vst3_folders.lock().clone();
+                match crate::portable_vst::shared_folder_setting(&current) {
+                    Ok(shared) if shared != current => {
+                        *params.vst3_folders.lock() = shared;
+                        mark_dirty(setter, &params);
+                    }
+                    Ok(_) => {}
+                    Err(error) => file_ui.message = error,
+                }
+            }
             egui::TopBottomPanel::top("header").show(ctx, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -159,16 +172,22 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     }
                     ui.label("Additional VST3 folders (optional)");
                     let mut vst3_folders = params.vst3_folders.lock().clone();
-                    if ui
-                        .add(
-                            TextEdit::singleline(&mut vst3_folders)
-                                .hint_text("Folder path; multiple paths use the OS separator"),
-                        )
-                        .changed()
-                    {
-                        *params.vst3_folders.lock() = vst3_folders;
+                    let folder_response = ui.add(
+                        TextEdit::singleline(&mut vst3_folders)
+                            .hint_text("Folder path; multiple paths use the OS separator"),
+                    );
+                    if folder_response.changed() {
+                        *params.vst3_folders.lock() = vst3_folders.clone();
                         mark_dirty(setter, &params);
                     }
+                    if folder_response.lost_focus() {
+                        if let Err(error) =
+                            crate::portable_vst::save_user_folders(&vst3_folders)
+                        {
+                            file_ui.message = error;
+                        }
+                    }
+                    ui.small("Custom folders are shared by Rustel instances in this package and saved in RustelData/vst/folders.txt.");
                     if ui.button("Browse for a plugin folder…").clicked() {
                         start_folder_picker(file_ui);
                     }
@@ -188,7 +207,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                             ),
                         );
                     }
-                    ui.small("Each plugin class has a 30-second scan limit. Results persist in RustelData/vst/scan.json; delete that file to retry an unchanged bundle.");
+                    ui.small("Each plugin class has a 30-second limit; the full scan can run up to two hours. Results persist in RustelData/vst/scan.json; delete that file to retry an unchanged bundle.");
                     egui::ScrollArea::vertical()
                         .max_height(120.0)
                         .show(ui, |ui| {
@@ -372,9 +391,13 @@ fn add_vst3_folder(
     }
     match std::env::join_paths(folders) {
         Ok(joined) => {
-            *params.vst3_folders.lock() = joined.to_string_lossy().into_owned();
+            let joined = joined.to_string_lossy().into_owned();
+            *params.vst3_folders.lock() = joined.clone();
             mark_dirty(setter, params);
-            file_ui.message = format!("Added plugin folder: {}", selected.display());
+            file_ui.message = match crate::portable_vst::save_user_folders(&joined) {
+                Ok(()) => format!("Added and saved plugin folder: {}", selected.display()),
+                Err(error) => format!("Added folder for this instance, but {error}"),
+            };
             file_ui.folder_picker = None;
         }
         Err(error) => {
