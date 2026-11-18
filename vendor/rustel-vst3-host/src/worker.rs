@@ -41,7 +41,7 @@ const LIMIT_ENV: &str = "RUSTEL_VST3_WORK_LIMIT_MS";
 /// The time one class of a bundle has in the scan. A load that finishes no
 /// class in this time gives no answer; each finished class starts the time
 /// again.
-pub(crate) const WORK_LIMIT: Duration = Duration::from_secs(120);
+pub(crate) const WORK_LIMIT: Duration = Duration::from_secs(30);
 /// A scan process with its answer in the file has this long to unload the
 /// bundle before the host ends the process.
 const QUIT_LIMIT: Duration = Duration::from_secs(2);

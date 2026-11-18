@@ -178,6 +178,17 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     if ui.button("Scan VST3 plugins").clicked() {
                         shared.scan_vst_plugins.store(true, Ordering::Release);
                     }
+                    if let Some(progress) = rustel_runtime::vst::scan_progress() {
+                        let current_bundle = progress.read.saturating_add(1).min(progress.bundles);
+                        ui.colored_label(
+                            Color32::LIGHT_BLUE,
+                            format!(
+                                "Scanning: {} — bundle {current_bundle}/{}",
+                                progress.plugin, progress.bundles
+                            ),
+                        );
+                    }
+                    ui.small("Each plugin class has a 30-second scan limit. Results persist in RustelData/vst/scan.json; delete that file to retry an unchanged bundle.");
                     egui::ScrollArea::vertical()
                         .max_height(120.0)
                         .show(ui, |ui| {

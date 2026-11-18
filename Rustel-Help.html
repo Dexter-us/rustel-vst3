@@ -192,7 +192,7 @@
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
-      <span class="badge">Version 0.1.2</span>
+      <span class="badge">Version 0.1.3</span>
       <span class="badge">Manufacturer: Dexter U.S.</span>
       <span class="badge">Csound 6.18.1 bundled</span>
     </div>
@@ -267,7 +267,7 @@
       <section id="vst3">
         <h2>VST3 instruments and effects</h2>
         <p>Rustel can host installed 64-bit VST3 plugins inside its score. Click <strong>Scan VST3 plugins</strong> in the editor to scan the standard Windows folders shown there: <code>%LOCALAPPDATA%\Programs\Common\VST3</code> and <code>%CommonProgramFiles%\VST3</code>. To include another location, click <strong>Browse for a plugin folder</strong>, choose a folder, then scan. You can also type multiple paths in <strong>Additional VST3 folders</strong>, separated by semicolons.</p>
-        <p>The bundled <code>RustelVstWorker.exe</code> examines each plugin in a separate helper process. It should run without opening a console window. The helper belongs beside <code>Rustel.vst3</code> in the portable package; it is not itself a plugin folder to scan.</p>
+        <p>The bundled <code>RustelVstWorker.exe</code> examines each plugin in a separate helper process. The editor shows the plugin or bundle currently being checked. Each plugin class has a 30-second limit; if one hangs, its helper process is stopped and scanning continues with other bundles. The helper should run without opening a console window and belongs beside <code>Rustel.vst3</code> in the portable package; it is not itself a plugin folder to scan.</p>
         <h3>Play a VST3 instrument</h3>
         <p><code>.vsti("Plugin Name")</code> sends score notes—including pitch, velocity, and note length—to the named instrument:</p>
         <pre><code>note("c2 e2 g2").vsti("Your instrument")</code></pre>
@@ -301,7 +301,7 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <div class="callout">
           <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Hosted VST3 MIDI output is routed through the target directive above.</p>
         </div>
-        <p>VST3 scan cache and presets are stored in <code>RustelData</code> beside the portable package, unless the process already has <code>RUSTEL_CONFIG_DIR</code> set. The portable package does not change persistent Windows settings.</p>
+        <p>VST3 scan results and presets are stored in <code>RustelData</code> beside the portable package, unless the process already has <code>RUSTEL_CONFIG_DIR</code> set. Cached scan results—including failures—are reused between launches while a plugin bundle remains unchanged. Installing or changing a plugin causes it to be scanned again. To retry unchanged bundles, delete only <code>RustelData/vst/scan.json</code>; this leaves saved presets in place. The portable package does not change persistent Windows settings.</p>
       </section>
 
       <section id="midi">
