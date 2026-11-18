@@ -570,7 +570,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
             draw_plugin_directory(ctx, file_ui, &shared);
             draw_score_dialog(ctx, file_ui, &params, setter);
             draw_folder_picker(ctx, file_ui, &params, setter);
-            draw_csound_editor(ctx, file_ui);
+            draw_csound_editor(ctx, file_ui, &params, setter);
         },
     )
 }
@@ -2202,7 +2202,7 @@ mod vst_code_generation_tests {
         list_orc_files, next_open_patch_position, plugin_category_group, plugin_example,
         plugin_matches_search, plugin_midi_example, plugin_midi_target_example,
         plugin_picker_label, plugin_picker_matches, replace_char_range, sort_vst_plugins,
-        text_at_char_range,
+        text_at_char_range, trusted_orchestra_folder,
     };
     use crate::{
         engine::{VstParameterChoice, VstPluginEntry},
@@ -2465,6 +2465,22 @@ mod vst_code_generation_tests {
         assert_eq!(list_orc_files(&directory), vec![first, second]);
 
         fs::remove_dir_all(directory).expect("remove ORC picker folder");
+    }
+
+    #[test]
+    fn trusted_orchestra_folder_follows_loaded_or_saved_orc_file() {
+        assert_eq!(
+            trusted_orchestra_folder(std::path::Path::new("Scores/fm.orc")),
+            Some(std::path::Path::new("Scores"))
+        );
+        assert_eq!(
+            trusted_orchestra_folder(std::path::Path::new("Scores/fm.ORC")),
+            Some(std::path::Path::new("Scores"))
+        );
+        assert_eq!(
+            trusted_orchestra_folder(std::path::Path::new("Scores/project.csd")),
+            None
+        );
     }
 }
 
@@ -2919,7 +2935,12 @@ fn start_csound_editor(file_ui: &mut ScoreFileUi) {
     });
 }
 
-fn draw_csound_editor(ctx: &egui::Context, file_ui: &mut ScoreFileUi) {
+fn draw_csound_editor(
+    ctx: &egui::Context,
+    file_ui: &mut ScoreFileUi,
+    params: &RustelParams,
+    setter: &ParamSetter,
+) {
     let Some(editor) = file_ui.csound_editor.as_mut() else {
         return;
     };
@@ -2935,7 +2956,7 @@ fn draw_csound_editor(ctx: &egui::Context, file_ui: &mut ScoreFileUi) {
         .show(ctx, |ui| {
             ui.label(format!("Portable Scores folder: {}", editor.directory.display()));
             ui.small(
-                "This separate editor handles .orc and .csd text; it does not replace the Rustel score. To use an .orc, set Trusted .orc folder to this folder, then call await loadOrc(\"local:voice.orc\") in a score.",
+                "Loading or saving an .orc here automatically sets Trusted .orc folder to this folder. In a score, call await loadOrc(\"local:voice.orc\").",
             );
             ui.small("Save your edits before closing; this source editor is separate from the saved DAW score.");
             ui.horizontal(|ui| {
@@ -3021,6 +3042,7 @@ fn draw_csound_editor(ctx: &egui::Context, file_ui: &mut ScoreFileUi) {
         Some(CsoundSourceAction::Load(path)) => {
             match crate::score_files::read_csound_source(&path) {
                 Ok(source) => {
+                    set_trusted_orchestra_folder(&path, params, setter);
                     editor.filename = path
                         .file_name()
                         .unwrap_or_default()
@@ -3040,6 +3062,7 @@ fn draw_csound_editor(ctx: &egui::Context, file_ui: &mut ScoreFileUi) {
         Some(CsoundSourceAction::Save(path)) => {
             match crate::score_files::write_csound_source(&path, &editor.source) {
                 Ok(()) => {
+                    set_trusted_orchestra_folder(&path, params, setter);
                     editor.filename = path
                         .file_name()
                         .unwrap_or_default()
@@ -3065,6 +3088,32 @@ fn draw_csound_editor(ctx: &egui::Context, file_ui: &mut ScoreFileUi) {
         }
         Some(CsoundSourceAction::Close) | None => {}
     }
+}
+
+fn trusted_orchestra_folder(path: &std::path::Path) -> Option<&std::path::Path> {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("orc"))
+        .then(|| path.parent())
+        .flatten()
+        .filter(|parent| !parent.as_os_str().is_empty())
+}
+
+fn set_trusted_orchestra_folder(
+    path: &std::path::Path,
+    params: &RustelParams,
+    setter: &ParamSetter,
+) {
+    let Some(folder) = trusted_orchestra_folder(path) else {
+        return;
+    };
+    let folder = folder.to_string_lossy().into_owned();
+    let mut current = params.csound_orchestra_root.lock();
+    if *current == folder {
+        return;
+    }
+    *current = folder;
+    drop(current);
+    mark_dirty(setter, params);
 }
 
 fn start_score_dialog(file_ui: &mut ScoreFileUi, mode: ScoreDialogMode) {

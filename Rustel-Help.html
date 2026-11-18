@@ -346,8 +346,8 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <p>The plugin’s score and Csound source controls use the portable <code>Scores</code> folder beside the plugin bundle. Rustel creates that folder when needed. This keeps your files with the extracted portable copy instead of requiring a fixed Windows user folder.</p>
         <ul>
           <li>Use <strong>Load</strong> and <strong>Save</strong> for Rustel score text in <code>.strudel</code> or <code>.txt</code> files.</li>
-          <li>Use <strong>Csound files…</strong> to load or save separate <code>.orc</code> and <code>.csd</code> source text. This separate editor does not replace the Rustel score or run when you press Evaluate.</li>
-          <li>A saved <code>.orc</code> can be referenced by a Rustel score with <code>await loadOrc("local:voice.orc")</code> after enabling Csound and setting the trusted orchestra folder. Csound source is code; only open files you trust.</li>
+          <li>Use <strong>Csound files…</strong> to load or save separate <code>.orc</code> and <code>.csd</code> source text. Loading or saving an <code>.orc</code> automatically sets <strong>Trusted .orc folder</strong> to the portable <code>Scores</code> folder. This editor does not replace the Rustel score or run when you press Evaluate.</li>
+          <li>After enabling Csound, reference a saved <code>.orc</code> with <code>await loadOrc("local:voice.orc")</code>. Csound source is code; only open files you trust.</li>
           <li>Keep the folder with the plugin when moving the portable setup to another location.</li>
         </ul>
         <p>DAW project state also stores the score draft, last accepted score, phrase settings, gain, transport options, and window state.</p>
