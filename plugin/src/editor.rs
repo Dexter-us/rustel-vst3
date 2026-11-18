@@ -627,7 +627,9 @@ impl PluginPickerFilter {
     fn matches(self, plugin: &VstPluginEntry) -> bool {
         match self {
             Self::Instrument => plugin.instrument,
-            Self::Effect => !plugin.instrument,
+            // The scan classification is a useful hint, but score `.vst()` can
+            // host any scanned plugin that accepts audio input.
+            Self::Effect => true,
             Self::MidiSource => plugin.midi_source,
         }
     }
@@ -635,7 +637,7 @@ impl PluginPickerFilter {
     fn label(self) -> &'static str {
         match self {
             Self::Instrument => "instrument",
-            Self::Effect => "effect",
+            Self::Effect => "VST3 plugin",
             Self::MidiSource => "MIDI source",
         }
     }
@@ -643,7 +645,7 @@ impl PluginPickerFilter {
     fn empty_message(self) -> &'static str {
         match self {
             Self::Instrument => "No scanned VST3 instruments are available.",
-            Self::Effect => "No scanned VST3 effects are available.",
+            Self::Effect => "No scanned VST3 plugins are available.",
             Self::MidiSource => {
                 "No plugins are tagged for MIDI output. In Plugin List, open a plugin row and enable “MIDI output usable”."
             }
@@ -747,7 +749,9 @@ fn draw_patch_editor(
         }
         if ui.button("＋ VST effect").clicked() {
             new_node = Some(PatchNodeKind::VstEffect {
-                plugin: first_plugin_name(shared, |plugin| !plugin.instrument).unwrap_or_default(),
+                plugin: first_plugin_name(shared, |plugin| !plugin.instrument)
+                    .or_else(|| first_plugin_name(shared, |_| true))
+                    .unwrap_or_default(),
                 parameters: String::new(),
             });
         }
@@ -773,7 +777,11 @@ fn draw_patch_editor(
             )
             .clicked()
         {
-            match file_ui.patch_graph.generate_code() {
+            let orchestra_root = params.csound_orchestra_root.lock().clone();
+            match file_ui
+                .patch_graph
+                .generate_code_with_orchestra_root(&orchestra_root)
+            {
                 Ok(code) => {
                     let cursor = code.chars().count();
                     file_ui.pending_score_update = Some((code, cursor));
@@ -1326,6 +1334,7 @@ fn draw_patch_node_fields(
         }
         PatchNodeKind::VstEffect { plugin, parameters } => {
             ui.small("Scanned effect name");
+            ui.small("The list includes all scanned plugins; choose one that accepts audio input.");
             changed |= draw_plugin_picker(ui, plugin, id, shared, PluginPickerFilter::Effect);
             ui.small("Optional Rustel parameter object");
             changed |= ui
@@ -1358,7 +1367,7 @@ fn draw_plugin_picker(
     let selected_label = plugins
         .iter()
         .find(|plugin| plugin.name == *selected && plugin_picker_matches(plugin, filter))
-        .map(|plugin| plugin_display_label(plugin).to_owned())
+        .map(|plugin| plugin_picker_label(plugin, filter))
         .unwrap_or(if selected.is_empty() {
             if available_count == 0 {
                 format!("No scanned {} ({available_count})", filter.label())
@@ -1381,11 +1390,10 @@ fn draw_plugin_picker(
                 if !plugin_picker_matches(plugin, filter) {
                     continue;
                 }
-                let prefix = if plugin.midi_source { "MIDI · " } else { "" };
                 if ui
                     .selectable_label(
                         *selected == plugin.name,
-                        format!("{prefix}{}", plugin.display_label),
+                        plugin_picker_label(plugin, filter),
                     )
                     .clicked()
                 {
@@ -1417,6 +1425,24 @@ fn first_plugin_name(
         .iter()
         .find(|plugin| predicate(plugin))
         .map(|plugin| plugin.name.clone())
+}
+
+fn plugin_picker_label(plugin: &VstPluginEntry, filter: PluginPickerFilter) -> String {
+    match filter {
+        PluginPickerFilter::Effect => {
+            let class = if plugin.instrument {
+                "Instrument"
+            } else {
+                "Effect"
+            };
+            let midi = if plugin.midi_source { " · MIDI" } else { "" };
+            format!("{class}{midi} · {}", plugin_display_label(plugin))
+        }
+        PluginPickerFilter::Instrument | PluginPickerFilter::MidiSource => {
+            let midi = if plugin.midi_source { "MIDI · " } else { "" };
+            format!("{midi}{}", plugin_display_label(plugin))
+        }
+    }
 }
 
 fn default_instrument_value(kind: InstrumentKind, shared: &Shared) -> String {
@@ -2175,7 +2201,8 @@ mod vst_code_generation_tests {
         PluginPickerFilter, find_vst_call_at_char, insert_code_at_char_range, insert_vst_parameter,
         list_orc_files, next_open_patch_position, plugin_category_group, plugin_example,
         plugin_matches_search, plugin_midi_example, plugin_midi_target_example,
-        plugin_picker_matches, replace_char_range, sort_vst_plugins, text_at_char_range,
+        plugin_picker_label, plugin_picker_matches, replace_char_range, sort_vst_plugins,
+        text_at_char_range,
     };
     use crate::{
         engine::{VstParameterChoice, VstPluginEntry},
@@ -2352,7 +2379,7 @@ mod vst_code_generation_tests {
     }
 
     #[test]
-    fn patch_plugin_pickers_separate_instruments_effects_and_midi_tags() {
+    fn patch_plugin_pickers_include_scanned_effect_candidates() {
         let instrument = VstPluginEntry {
             key: "keys".into(),
             name: "Keys".into(),
@@ -2404,6 +2431,14 @@ mod vst_code_generation_tests {
             &audio_effect,
             PluginPickerFilter::Effect
         ));
+        assert!(plugin_picker_matches(
+            &instrument,
+            PluginPickerFilter::Effect
+        ));
+        assert_eq!(
+            plugin_picker_label(&instrument, PluginPickerFilter::Effect),
+            "Instrument · Keys"
+        );
     }
 
     #[test]
@@ -2592,6 +2627,9 @@ fn attach_orc_file(
         .parent()
         .ok_or_else(|| "The selected ORC file has no parent folder.".to_owned())?;
     let mut graph = file_ui.patch_graph.clone();
+    let current_root = std::path::PathBuf::from(params.csound_orchestra_root.lock().as_str())
+        .canonicalize()
+        .ok();
     let existing_orcs = graph
         .nodes
         .iter()
@@ -2601,16 +2639,20 @@ fn attach_orc_file(
                 instrument: InstrumentKind::Csound,
                 orc_file: Some(path),
                 ..
-            } => Some(std::path::PathBuf::from(path)),
+            } => {
+                let path = std::path::PathBuf::from(path);
+                Some(if path.is_absolute() {
+                    path
+                } else if let Some(root) = current_root.as_deref() {
+                    root.join(path)
+                } else {
+                    path
+                })
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
-    let current_root = std::path::PathBuf::from(params.csound_orchestra_root.lock().as_str())
-        .canonicalize()
-        .ok();
-    let update_root = !current_root
-        .as_deref()
-        .is_some_and(|root| path_is_within(root, &selected));
+    let update_root = current_root.as_deref() != Some(parent);
     if update_root
         && existing_orcs
             .iter()

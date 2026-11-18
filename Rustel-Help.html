@@ -192,7 +192,7 @@
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
-      <span class="badge">Version 0.1.12</span>
+      <span class="badge">Version 0.1.13</span>
       <span class="badge">Manufacturer: Dexter U.S.</span>
       <span class="badge">Csound 6.18.1 bundled</span>
     </div>
@@ -300,14 +300,14 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
 note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <p>The Csound route sends MIDI pitch as fractional MIDI-note <code>p4</code>, velocity as <code>p5</code>, and note-off as the event duration. It supports up to 1,024 generated notes per phrase. The selected phrase is rendered off-thread and repeats. Hosted routing currently carries notes and velocity only; it does not route MIDI CC, pitch bend, aftertouch, or SysEx.</p>
         <h3>Build a patch with blocks</h3>
-        <p>Choose <strong>Patch</strong> beside <strong>Score</strong> to open the visual canvas. Use its buttons or right-click the canvas to add note patterns, MIDI VST3 sources, instruments, pattern/audio expressions, VST3 effects, and Audio output. Instrument blocks can use Rustel synths, samples, wavetables, KabelSalat graphs, Csound instruments, or scanned VST3 instruments. The screen shows scan counts and has shortcuts to the plugin list and rescan.</p>
+        <p>Choose <strong>Patch</strong> beside <strong>Score</strong> to open the visual canvas. Use its buttons or right-click the canvas to add note patterns, MIDI VST3 sources, instruments, pattern/audio expressions, VST3 effects, and Audio output. Instrument blocks can use Rustel synths, samples, wavetables, KabelSalat graphs, Csound instruments, or scanned VST3 instruments. The screen shows scan counts and has shortcuts to the plugin list and rescan. The effect picker lists every scanned plugin and labels the scanner's class; choose one that accepts audio input.</p>
         <ol>
           <li>Edit each block's fields. For VST3 blocks, choose a scanned plugin or enter its name. Mark a MIDI VST block as an effect or an instrument to select the correct Rustel call.</li>
           <li>Click a block's output port, then click a compatible input port. Amber cables are MIDI; teal cables are audio. Incompatible port types are rejected.</li>
           <li>Drag a block's title to move it, or drag empty canvas to pan. Remove a block with its × button, open <strong>Connections</strong> to remove a cable, or choose <strong>Clear all blocks…</strong> to reset the canvas.</li>
           <li>Click <strong>Generate Code</strong>. Rustel validates the graph and replaces the current score draft with generated code. Switch to <strong>Score</strong>, review it, then press <strong>Evaluate</strong>.</li>
         </ol>
-        <p>For Csound, choose <strong>Load ORC from disk…</strong> inside the Csound instrument block, then enter the instrument name declared in that file. The selected file is included as <code>await loadOrc(...)</code> when code is generated; its containing folder becomes the trusted ORC folder when needed. Enable <strong>Allow native Csound</strong>, generate the code, review it in Score, then press <strong>Evaluate</strong>. Only load Csound source you trust.</p>
+        <p>For Csound, choose <strong>Load ORC from disk…</strong> inside the Csound instrument block, then enter the instrument name declared in that file. The selected file’s folder becomes the trusted ORC folder, and generated code loads the file relative to that folder rather than the DAW’s current directory. Enable <strong>Allow native Csound</strong>, generate the code, review it in Score, then press <strong>Evaluate</strong>. Only load Csound source you trust.</p>
         <p>The default patch is a note pattern connected to a Rustel synth and Audio output. A hosted MIDI VST source can feed one Rustel synth, sample, wavetable, KabelSalat graph, Csound instrument, or hosted VSTi target. The graph is saved in the DAW's plugin state. Generation is one-way: Rustel does not convert handwritten score code back into blocks.</p>
         <p>For an ordinary audio-effect chain, connect a note pattern to an instrument, connect its audio output to a VST3 effect, then connect that effect to Audio output. The current renderer does not apply a downstream audio effect to the separately rendered branch from a hosted MIDI target.</p>
         <pre><code>(note("c3 e3 g3")).vsti("Your instrument").vst("Your effect", { mix: 0.5 })</code></pre>

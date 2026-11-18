@@ -458,7 +458,10 @@ impl PatchGraph {
         Ok(())
     }
 
-    pub fn generate_code(&self) -> Result<String, String> {
+    pub fn generate_code_with_orchestra_root(
+        &self,
+        orchestra_root: &str,
+    ) -> Result<String, String> {
         self.validate()?;
         let output = self
             .nodes
@@ -511,6 +514,7 @@ impl PatchGraph {
         orc_files.sort_unstable();
         orc_files.dedup();
         for path in orc_files {
+            let path = local_orc_path(path, orchestra_root)?;
             lines.push(format!(
                 "await loadOrc({});",
                 js_string_literal(&format!("local:{path}"))
@@ -809,6 +813,27 @@ fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
     }
 }
 
+fn local_orc_path(path: &str, orchestra_root: &str) -> Result<String, String> {
+    let path = std::path::Path::new(path);
+    if !path.is_absolute() || orchestra_root.trim().is_empty() {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+
+    let root = std::path::Path::new(orchestra_root)
+        .canonicalize()
+        .map_err(|_| "Set Trusted .orc folder to the selected orchestra's folder.".to_owned())?;
+    let absolute = path
+        .canonicalize()
+        .map_err(|_| "The selected ORC file is missing. Load it again from disk.".to_owned())?;
+    absolute
+        .strip_prefix(root)
+        .map(|relative| relative.to_string_lossy().into_owned())
+        .map_err(|_| {
+            "The selected ORC is outside Trusted .orc folder. Load it again from its folder."
+                .to_owned()
+        })
+}
+
 fn js_string_literal(value: &str) -> String {
     let mut quoted = String::from("\"");
     for character in value.chars() {
@@ -838,6 +863,14 @@ fn finite_position(value: f32) -> f32 {
 mod tests {
     use super::*;
 
+    fn test_folder(name: &str) -> std::path::PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("rustel-patch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("create test folder");
+        folder
+    }
+
     fn add_audio_effect(graph: &mut PatchGraph, source: u64) -> u64 {
         let effect = graph
             .add_node(
@@ -863,7 +896,7 @@ mod tests {
     #[test]
     fn default_patch_generates_a_note_to_synth_audio_chain() {
         let code = PatchGraph::default()
-            .generate_code()
+            .generate_code_with_orchestra_root("")
             .expect("default patch generates");
         assert!(code.contains("note(\"c3 e3 g3 b3\")"));
         assert!(code.contains(".s(\"sine\")"));
@@ -879,7 +912,9 @@ mod tests {
             .expect("synth")
             .id;
         add_audio_effect(&mut graph, synth);
-        let code = graph.generate_code().expect("audio chain generates");
+        let code = graph
+            .generate_code_with_orchestra_root("")
+            .expect("audio chain generates");
         assert!(code.contains(".s(\"sine\")"));
         assert!(code.contains(".vst(\"Room Verb\", { mix: 0.5 })"));
     }
@@ -887,13 +922,9 @@ mod tests {
     #[test]
     fn selected_csound_orc_is_loaded_before_generated_notes() {
         let mut graph = PatchGraph::default();
-        let orc_path = std::env::temp_dir()
-            .join("trusted")
-            .join("orchestra")
-            .join("fm.orc")
-            .to_string_lossy()
-            .into_owned();
-        let escaped_orc_path = orc_path.replace('\\', "\\\\").replace('"', "\\\"");
+        let orchestra_root = test_folder("orc-root");
+        let orchestra_path = orchestra_root.join("fm.orc");
+        std::fs::write(&orchestra_path, "instr fm_voice\nendin").expect("write orchestra");
         let instrument = graph
             .nodes
             .iter_mut()
@@ -902,12 +933,46 @@ mod tests {
         instrument.kind = PatchNodeKind::Instrument {
             instrument: InstrumentKind::Csound,
             value: "fm_voice".into(),
-            orc_file: Some(orc_path),
+            orc_file: Some(orchestra_path.to_string_lossy().into_owned()),
         };
 
-        let code = graph.generate_code().expect("Csound patch generates");
-        assert!(code.starts_with(&format!("await loadOrc(\"local:{escaped_orc_path}\");")));
+        let code = graph
+            .generate_code_with_orchestra_root(&orchestra_root.to_string_lossy())
+            .expect("Csound patch generates");
+        assert!(code.starts_with("await loadOrc(\"local:fm.orc\");"));
         assert!(code.contains(".csoundm(\"fm_voice\")"));
+        std::fs::remove_dir_all(orchestra_root).expect("remove test folder");
+    }
+
+    #[test]
+    fn selected_csound_orc_keeps_its_subfolder_relative_to_the_trusted_root() {
+        let mut graph = PatchGraph::default();
+        let orchestra_root = test_folder("orc-subfolder");
+        let subfolder = orchestra_root.join("voices");
+        std::fs::create_dir_all(&subfolder).expect("create orchestra subfolder");
+        let orchestra_path = subfolder.join("fm.orc");
+        std::fs::write(&orchestra_path, "instr fm_voice\nendin").expect("write orchestra");
+        let instrument = graph
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node.kind, PatchNodeKind::Instrument { .. }))
+            .expect("instrument");
+        instrument.kind = PatchNodeKind::Instrument {
+            instrument: InstrumentKind::Csound,
+            value: "fm_voice".into(),
+            orc_file: Some(orchestra_path.to_string_lossy().into_owned()),
+        };
+
+        let relative = orchestra_path
+            .strip_prefix(&orchestra_root)
+            .expect("ORC is under trusted root")
+            .to_string_lossy();
+        let escaped = js_string_literal(&format!("local:{relative}"));
+        let code = graph
+            .generate_code_with_orchestra_root(&orchestra_root.to_string_lossy())
+            .expect("Csound patch generates");
+        assert!(code.starts_with(&format!("await loadOrc({escaped});")));
+        std::fs::remove_dir_all(orchestra_root).expect("remove test folder");
     }
 
     #[test]
@@ -948,7 +1013,9 @@ mod tests {
         graph.connect(pattern, source).expect("pattern to MIDI VST");
         graph.connect(source, target).expect("MIDI VST to target");
         graph.connect(target, output).expect("instrument to output");
-        let code = graph.generate_code().expect("MIDI graph generates");
+        let code = graph
+            .generate_code_with_orchestra_root("")
+            .expect("MIDI graph generates");
         assert!(code.contains("// MIDI target: vsti \"Soft Keys\""));
         assert!(code.contains(".vst(\"MIDI Arpeggiator\")"));
         assert!(code.contains("note(\"c4 e4\")"));
@@ -1005,7 +1072,9 @@ mod tests {
             graph.connect(pattern, source).expect("pattern cable");
             graph.connect(source, target).expect("MIDI cable");
             graph.connect(target, output).expect("audio cable");
-            let code = graph.generate_code().expect("MIDI route generates");
+            let code = graph
+                .generate_code_with_orchestra_root("")
+                .expect("MIDI route generates");
             assert!(
                 code.contains(&format!("// MIDI target: {expected_target}")),
                 "missing target {expected_target} in {code}"
@@ -1017,7 +1086,7 @@ mod tests {
     #[test]
     fn default_patch_generated_score_is_accepted_by_the_rustel_compiler() {
         let code = PatchGraph::default()
-            .generate_code()
+            .generate_code_with_orchestra_root("")
             .expect("default patch generates");
         std::thread::Builder::new()
             .stack_size(rustel_engine::QUERY_WORKER_STACK_BYTES)
@@ -1044,7 +1113,9 @@ mod tests {
             value: "sine(sFreq).mul(0.2).out()".into(),
             orc_file: None,
         };
-        let code = graph.generate_code().expect("graph patch generates");
+        let code = graph
+            .generate_code_with_orchestra_root("")
+            .expect("graph patch generates");
         std::thread::Builder::new()
             .stack_size(rustel_engine::QUERY_WORKER_STACK_BYTES)
             .spawn(move || {
