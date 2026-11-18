@@ -68,9 +68,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.9 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.9.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.9 --release --locked
+cargo build --package rustel-vst3@0.1.10 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.10.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.10 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -115,7 +115,7 @@ Add an effect by chaining `.vst("Effect Name")` after the sound or instrument. E
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
 
-The editor header shows the plugin version, such as **v0.1.9**. Use that label to distinguish this build from older downloads.
+The editor header shows the plugin version, such as **v0.1.10**. Use that label to distinguish this build from older downloads.
 
 ## Visual patch editor
 
