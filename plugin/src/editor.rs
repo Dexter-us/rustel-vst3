@@ -1,4 +1,8 @@
-use crate::{engine::Shared, params::RustelParams};
+use crate::{
+    engine::{Shared, VstPluginEntry},
+    params::RustelParams,
+    patch::{ExpressionSignal, InstrumentKind, PatchGraph, PatchNodeKind, PortKind},
+};
 use copypasta::{ClipboardContext, ClipboardProvider};
 use nih_plug::prelude::*;
 use nih_plug_egui::{
@@ -25,6 +29,13 @@ struct ScoreFileUi {
     midi_graph_target: String,
     plugin_directory_open: bool,
     plugin_search: String,
+    patch_graph: PatchGraph,
+    patch_loaded: bool,
+    patch_screen: bool,
+    patch_wire_from: Option<u64>,
+    patch_pan: egui::Vec2,
+    patch_message: String,
+    add_instrument_kind: InstrumentKind,
 }
 
 #[derive(Clone, Debug)]
@@ -107,6 +118,16 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     }
                     Ok(_) => {}
                     Err(error) => file_ui.message = error,
+                }
+            }
+            if !file_ui.patch_loaded {
+                file_ui.patch_loaded = true;
+                let saved_patch = params.patch_graph.lock().clone();
+                if !saved_patch.trim().is_empty() {
+                    match PatchGraph::from_json(&saved_patch) {
+                        Ok(graph) => file_ui.patch_graph = graph,
+                        Err(error) => file_ui.patch_message = error,
+                    }
                 }
             }
             egui::TopBottomPanel::top("header").show(ctx, |ui| {
@@ -260,6 +281,26 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     });
                 });
             egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(!file_ui.patch_screen, "Score").clicked() {
+                        file_ui.patch_screen = false;
+                    }
+                    if ui.selectable_label(file_ui.patch_screen, "Patch").clicked() {
+                        file_ui.patch_screen = true;
+                    }
+                });
+                ui.separator();
+                if file_ui.patch_screen {
+                    if draw_patch_editor(ui, file_ui, &shared) {
+                        match file_ui.patch_graph.to_json() {
+                            Ok(saved) => {
+                                *params.patch_graph.lock() = saved;
+                                mark_dirty(setter, &params);
+                            }
+                            Err(error) => file_ui.patch_message = error,
+                        }
+                    }
+                } else {
                 ui.horizontal(|ui| {
                     ui.heading("Score");
                     if ui
@@ -499,6 +540,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     *params.draft.lock() = draft;
                     mark_dirty(setter, &params);
                 }
+                }
             });
             draw_plugin_directory(ctx, file_ui, &shared);
             draw_score_dialog(ctx, file_ui, &params, setter);
@@ -541,6 +583,559 @@ fn insert_code_at_char_range(
     result.push_str(&insertion);
     result.push_str(after);
     (result, start + insertion.chars().count())
+}
+
+const PATCH_NODE_WIDTH: f32 = 220.0;
+const PATCH_NODE_HEIGHT: f32 = 172.0;
+
+#[derive(Default)]
+struct PatchNodeActions {
+    changed: bool,
+    input_clicked: bool,
+    output_clicked: bool,
+    remove_clicked: bool,
+    input_port: Option<egui::Pos2>,
+    output_port: Option<egui::Pos2>,
+}
+
+fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shared) -> bool {
+    let mut changed = false;
+    let mut new_node = None;
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("＋ Notes").clicked() {
+            new_node = Some(PatchNodeKind::NotePattern {
+                expression: "note(\"c3 e3 g3\")".into(),
+            });
+        }
+        if ui.button("＋ MIDI VST").clicked() {
+            new_node = Some(PatchNodeKind::MidiVst {
+                plugin: first_plugin_name(shared, |plugin| plugin.midi_source).unwrap_or_default(),
+                is_effect: true,
+            });
+        }
+        egui::ComboBox::from_id_salt("rustel-patch-add-instrument-kind")
+            .selected_text(format!("Add: {}", file_ui.add_instrument_kind.label()))
+            .show_ui(ui, |ui| {
+                for kind in [
+                    InstrumentKind::RustelSynth,
+                    InstrumentKind::Sample,
+                    InstrumentKind::Wavetable,
+                    InstrumentKind::Graph,
+                    InstrumentKind::Csound,
+                    InstrumentKind::Vsti,
+                ] {
+                    ui.selectable_value(&mut file_ui.add_instrument_kind, kind, kind.label());
+                }
+            });
+        if ui.button("＋ Instrument").clicked() {
+            let kind = file_ui.add_instrument_kind;
+            new_node = Some(PatchNodeKind::Instrument {
+                instrument: kind,
+                value: default_instrument_value(kind, shared),
+            });
+        }
+        if ui.button("＋ Pattern op").clicked() {
+            new_node = Some(PatchNodeKind::Expression {
+                signal: ExpressionSignal::Midi,
+                suffix: ".slow(2)".into(),
+            });
+        }
+        if ui.button("＋ Audio op").clicked() {
+            new_node = Some(PatchNodeKind::Expression {
+                signal: ExpressionSignal::Audio,
+                suffix: ".gain(0.5)".into(),
+            });
+        }
+        if ui.button("＋ VST effect").clicked() {
+            new_node = Some(PatchNodeKind::VstEffect {
+                plugin: first_plugin_name(shared, |plugin| !plugin.instrument).unwrap_or_default(),
+                parameters: String::new(),
+            });
+        }
+        let has_output = file_ui
+            .patch_graph
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, PatchNodeKind::Output));
+        if ui
+            .add_enabled(!has_output, egui::Button::new("＋ Output"))
+            .clicked()
+        {
+            new_node = Some(PatchNodeKind::Output);
+        }
+        ui.separator();
+        if ui
+            .button(RichText::new("Generate Code").strong())
+            .on_hover_text(
+                "Validate this patch and replace the score editor with generated Rustel code",
+            )
+            .clicked()
+        {
+            match file_ui.patch_graph.generate_code() {
+                Ok(code) => {
+                    let cursor = code.chars().count();
+                    file_ui.pending_score_update = Some((code, cursor));
+                    file_ui.patch_screen = false;
+                    file_ui.patch_message.clear();
+                    file_ui.message =
+                        "Generated score code. Review it in Score, then press Evaluate.".into();
+                }
+                Err(error) => file_ui.patch_message = error,
+            }
+        }
+    });
+
+    if let Some(kind) = new_node {
+        let index = file_ui.patch_graph.nodes.len();
+        let column = index % 3;
+        let row = index / 3;
+        match file_ui.patch_graph.add_node(
+            kind,
+            [14.0 + column as f32 * 226.0, 24.0 + row as f32 * 200.0],
+        ) {
+            Ok(_) => {
+                file_ui.patch_message.clear();
+                changed = true;
+            }
+            Err(error) => file_ui.patch_message = error,
+        }
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        ui.small("Click a node’s output, then a compatible input to make a cable. Drag a block’s title to move it; drag empty canvas to pan.");
+        ui.label(RichText::new("MIDI").color(port_color(PortKind::Midi)));
+        ui.label(RichText::new("Audio").color(port_color(PortKind::Audio)));
+        if file_ui.patch_wire_from.is_some() && ui.small_button("Cancel cable").clicked() {
+            file_ui.patch_wire_from = None;
+        }
+    });
+    if !file_ui.patch_message.is_empty() {
+        ui.colored_label(Color32::LIGHT_RED, &file_ui.patch_message);
+    }
+
+    let wires = file_ui.patch_graph.connections.clone();
+    let mut remove_wire = None;
+    ui.collapsing("Connections · click × to remove a cable", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for wire in &wires {
+                let source = file_ui
+                    .patch_graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == wire.source)
+                    .map(|node| node.kind.title())
+                    .unwrap_or("Missing node");
+                let target = file_ui
+                    .patch_graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == wire.target)
+                    .map(|node| node.kind.title())
+                    .unwrap_or("Missing node");
+                if ui
+                    .small_button(format!("{} {source} → {target} ×", wire.signal.label()))
+                    .clicked()
+                {
+                    remove_wire = Some((wire.source, wire.target));
+                }
+            }
+            if wires.is_empty() {
+                ui.small("No cables yet.");
+            }
+        });
+    });
+    if let Some((source, target)) = remove_wire {
+        file_ui.patch_graph.disconnect(source, target);
+        changed = true;
+    }
+    ui.separator();
+
+    let available = ui.available_size();
+    let canvas_size = egui::vec2(available.x.max(240.0), available.y.max(280.0));
+    let (canvas_rect, canvas_response) =
+        ui.allocate_exact_size(canvas_size, egui::Sense::click_and_drag());
+    if canvas_response.dragged() {
+        file_ui.patch_pan += canvas_response.drag_delta();
+    }
+    let painter = ui.painter_at(canvas_rect);
+    painter.rect_filled(canvas_rect, 4.0, Color32::from_rgb(24, 27, 34));
+
+    let mut removed_node = None;
+    let mut new_connection = None;
+    let mut port_positions = std::collections::HashMap::new();
+    for index in 0..file_ui.patch_graph.nodes.len() {
+        let node = &mut file_ui.patch_graph.nodes[index];
+        let id = node.id;
+        let screen_position =
+            canvas_rect.min + file_ui.patch_pan + egui::vec2(node.position[0], node.position[1]);
+        let mut actions = PatchNodeActions::default();
+        egui::Area::new(egui::Id::new(("rustel-patch-node", id)))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen_position)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::group(ui.style())
+                    .fill(Color32::from_rgb(39, 43, 53))
+                    .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(83, 91, 108)))
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_min_size(egui::vec2(
+                            PATCH_NODE_WIDTH - 16.0,
+                            PATCH_NODE_HEIGHT - 16.0,
+                        ));
+                        ui.horizontal(|ui| {
+                            let drag = ui.add(
+                                egui::Label::new(
+                                    RichText::new(node.kind.title())
+                                        .strong()
+                                        .color(Color32::from_rgb(202, 187, 246)),
+                                )
+                                .sense(egui::Sense::drag()),
+                            );
+                            if drag.dragged() {
+                                let delta = drag.drag_delta();
+                                node.position[0] =
+                                    (node.position[0] + delta.x).clamp(-4096.0, 4096.0);
+                                node.position[1] =
+                                    (node.position[1] + delta.y).clamp(-4096.0, 4096.0);
+                                actions.changed = true;
+                            }
+                            if ui.small_button("×").on_hover_text("Remove node").clicked() {
+                                actions.remove_clicked = true;
+                            }
+                        });
+                        ui.separator();
+                        actions.changed |= draw_patch_node_fields(ui, &mut node.kind, id, shared);
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if let Some(input) = node.kind.input_kind() {
+                                let connected = file_ui
+                                    .patch_graph
+                                    .connections
+                                    .iter()
+                                    .any(|wire| wire.target == id);
+                                let label = if connected {
+                                    format!("← {} In ✓", input.label())
+                                } else {
+                                    format!("← {} In", input.label())
+                                };
+                                let response =
+                                    ui.small_button(RichText::new(label).color(port_color(input)));
+                                actions.input_port = Some(response.rect.center());
+                                if response.clicked() {
+                                    actions.input_clicked = true;
+                                }
+                            }
+                            if let Some(output) = node.kind.output_kind() {
+                                let selected = file_ui.patch_wire_from == Some(id);
+                                let label = if selected {
+                                    format!("{} Out …", output.label())
+                                } else {
+                                    format!("{} Out →", output.label())
+                                };
+                                let response = ui
+                                    .with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.small_button(
+                                                RichText::new(label).color(port_color(output)),
+                                            )
+                                        },
+                                    )
+                                    .inner;
+                                actions.output_port = Some(response.rect.center());
+                                if response.clicked() {
+                                    actions.output_clicked = true;
+                                }
+                            }
+                        });
+                    });
+            });
+
+        let node_title = node.kind.title();
+        let node_output_kind = node.kind.output_kind();
+        port_positions.insert(id, (actions.input_port, actions.output_port));
+        if actions.changed {
+            changed = true;
+            let dropped = file_ui.patch_graph.reconcile_connections();
+            if dropped > 0 {
+                file_ui.patch_message = format!(
+                    "Removed {dropped} cable(s) that no longer match the changed port type."
+                );
+            }
+        }
+        if actions.remove_clicked {
+            removed_node = Some(id);
+        }
+        if actions.output_clicked {
+            file_ui.patch_wire_from = Some(id);
+            file_ui.patch_message = format!(
+                "Choose a compatible input for the {} output.",
+                node_output_kind.map_or("node", PortKind::label)
+            );
+        }
+        if actions.input_clicked {
+            if let Some(source) = file_ui.patch_wire_from.take() {
+                new_connection = Some((source, id));
+            } else {
+                file_ui.patch_message = format!(
+                    "Click an output port first, then choose the {} input.",
+                    node_title
+                );
+            }
+        }
+    }
+    if let Some(id) = removed_node {
+        file_ui.patch_graph.remove_node(id);
+        if file_ui.patch_wire_from == Some(id) {
+            file_ui.patch_wire_from = None;
+        }
+        changed = true;
+    }
+    if let Some((source, target)) = new_connection {
+        match file_ui.patch_graph.connect(source, target) {
+            Ok(()) => {
+                changed = true;
+                file_ui.patch_message.clear();
+            }
+            Err(error) => file_ui.patch_message = error,
+        }
+    }
+    for wire in &file_ui.patch_graph.connections {
+        if let (Some((_, Some(from))), Some((Some(to), _))) = (
+            port_positions.get(&wire.source),
+            port_positions.get(&wire.target),
+        ) {
+            painter.arrow(
+                *from,
+                *to - *from,
+                egui::Stroke::new(2.5_f32, port_color(wire.signal)),
+            );
+        }
+    }
+    if let (Some(source_id), Some(to)) = (
+        file_ui.patch_wire_from,
+        ui.ctx().input(|input| input.pointer.hover_pos()),
+    ) && let Some((_, Some(from))) = port_positions.get(&source_id)
+    {
+        let signal = file_ui
+            .patch_graph
+            .nodes
+            .iter()
+            .find(|node| node.id == source_id)
+            .and_then(|node| node.kind.output_kind())
+            .unwrap_or(PortKind::Midi);
+        painter.line_segment([*from, to], egui::Stroke::new(1.5_f32, port_color(signal)));
+    }
+    changed
+}
+
+fn draw_patch_node_fields(
+    ui: &mut egui::Ui,
+    kind: &mut PatchNodeKind,
+    id: u64,
+    shared: &Shared,
+) -> bool {
+    let mut changed = false;
+    match kind {
+        PatchNodeKind::NotePattern { expression } => {
+            ui.small("Rustel / Strudel pattern source");
+            changed |= ui
+                .add(
+                    TextEdit::singleline(expression)
+                        .hint_text("note(\"c3 e3 g3\")")
+                        .desired_width(PATCH_NODE_WIDTH - 32.0),
+                )
+                .changed();
+        }
+        PatchNodeKind::MidiVst { plugin, is_effect } => {
+            ui.horizontal(|ui| {
+                ui.small("Plugin type");
+                changed |= ui.checkbox(is_effect, "MIDI effect").changed();
+            });
+            ui.small("Choose a scanned plugin that outputs MIDI.");
+            changed |= draw_plugin_picker(ui, plugin, id, shared, None);
+        }
+        PatchNodeKind::Instrument { instrument, value } => {
+            let previous = *instrument;
+            egui::ComboBox::from_id_salt(("rustel-patch-instrument", id))
+                .selected_text(instrument.label())
+                .show_ui(ui, |ui| {
+                    for choice in [
+                        InstrumentKind::RustelSynth,
+                        InstrumentKind::Sample,
+                        InstrumentKind::Wavetable,
+                        InstrumentKind::Graph,
+                        InstrumentKind::Csound,
+                        InstrumentKind::Vsti,
+                    ] {
+                        ui.selectable_value(instrument, choice, choice.label());
+                    }
+                });
+            if previous != *instrument {
+                *value = default_instrument_value(*instrument, shared);
+                changed = true;
+            }
+            match instrument {
+                InstrumentKind::Vsti => {
+                    ui.small("Choose a scanned VST3 instrument or enter its name.");
+                    changed |= draw_plugin_picker(ui, value, id, shared, Some(true));
+                }
+                InstrumentKind::Graph => {
+                    ui.small("KabelSalat expression");
+                    changed |= ui
+                        .add(
+                            TextEdit::singleline(value)
+                                .hint_text("sine(sFreq).mul(0.2).out()")
+                                .desired_width(PATCH_NODE_WIDTH - 32.0),
+                        )
+                        .changed();
+                }
+                InstrumentKind::Csound => {
+                    ui.small("Orchestra instrument name · enable Csound in Transport.");
+                    changed |= ui
+                        .add(
+                            TextEdit::singleline(value)
+                                .hint_text("triangle")
+                                .desired_width(PATCH_NODE_WIDTH - 32.0),
+                        )
+                        .changed();
+                }
+                _ => {
+                    ui.small("Sound or sample name");
+                    changed |= ui
+                        .add(
+                            TextEdit::singleline(value)
+                                .hint_text("sine, bd, or wavetable name")
+                                .desired_width(PATCH_NODE_WIDTH - 32.0),
+                        )
+                        .changed();
+                }
+            }
+        }
+        PatchNodeKind::Expression { signal, suffix } => {
+            let previous = *signal;
+            egui::ComboBox::from_id_salt(("rustel-patch-expression-signal", id))
+                .selected_text(match signal {
+                    ExpressionSignal::Midi => "MIDI / pattern",
+                    ExpressionSignal::Audio => "Audio",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(signal, ExpressionSignal::Midi, "MIDI / pattern");
+                    ui.selectable_value(signal, ExpressionSignal::Audio, "Audio");
+                });
+            if previous != *signal {
+                changed = true;
+            }
+            ui.small("Rustel method suffix, for example .slow(2) or .gain(0.5)");
+            changed |= ui
+                .add(
+                    TextEdit::singleline(suffix)
+                        .hint_text(".slow(2)")
+                        .desired_width(PATCH_NODE_WIDTH - 32.0),
+                )
+                .changed();
+        }
+        PatchNodeKind::VstEffect { plugin, parameters } => {
+            ui.small("Scanned effect name");
+            changed |= draw_plugin_picker(ui, plugin, id, shared, Some(false));
+            ui.small("Optional Rustel parameter object");
+            changed |= ui
+                .add(
+                    TextEdit::singleline(parameters)
+                        .hint_text("{ mix: 0.5 }")
+                        .desired_width(PATCH_NODE_WIDTH - 32.0),
+                )
+                .changed();
+        }
+        PatchNodeKind::Output => {
+            ui.small("Mixes incoming audio branches to the plugin output.");
+        }
+    }
+    changed
+}
+
+fn draw_plugin_picker(
+    ui: &mut egui::Ui,
+    selected: &mut String,
+    id: u64,
+    shared: &Shared,
+    instrument_filter: Option<bool>,
+) -> bool {
+    let plugins = shared.vst_plugins.lock().clone();
+    let selected_label = plugins
+        .iter()
+        .find(|plugin| plugin.name == *selected)
+        .map(|plugin| plugin.display_label.as_str())
+        .unwrap_or(if selected.is_empty() {
+            "Choose a scanned plugin…"
+        } else {
+            selected
+        });
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(("rustel-patch-plugin", id))
+        .selected_text(selected_label)
+        .width(PATCH_NODE_WIDTH - 34.0)
+        .show_ui(ui, |ui| {
+            for plugin in &plugins {
+                let show = match instrument_filter {
+                    Some(true) => plugin.instrument || plugin.midi_source,
+                    Some(false) => !plugin.instrument || plugin.midi_source,
+                    None => true,
+                };
+                if !show {
+                    continue;
+                }
+                let prefix = if plugin.midi_source { "MIDI · " } else { "" };
+                if ui
+                    .selectable_label(
+                        *selected == plugin.name,
+                        format!("{prefix}{}", plugin.display_label),
+                    )
+                    .clicked()
+                {
+                    *selected = plugin.name.clone();
+                    changed = true;
+                }
+            }
+        });
+    changed |= ui
+        .add(
+            TextEdit::singleline(selected)
+                .hint_text("Plugin name")
+                .desired_width(PATCH_NODE_WIDTH - 32.0),
+        )
+        .changed();
+    changed
+}
+
+fn first_plugin_name(
+    shared: &Shared,
+    predicate: impl Fn(&VstPluginEntry) -> bool,
+) -> Option<String> {
+    shared
+        .vst_plugins
+        .lock()
+        .iter()
+        .find(|plugin| predicate(plugin))
+        .map(|plugin| plugin.name.clone())
+}
+
+fn default_instrument_value(kind: InstrumentKind, shared: &Shared) -> String {
+    match kind {
+        InstrumentKind::RustelSynth => "sine".into(),
+        InstrumentKind::Sample => "bd".into(),
+        InstrumentKind::Wavetable => "wt".into(),
+        InstrumentKind::Graph => "sine(sFreq).mul(0.2).out()".into(),
+        InstrumentKind::Csound => "triangle".into(),
+        InstrumentKind::Vsti => {
+            first_plugin_name(shared, |plugin| plugin.instrument).unwrap_or_default()
+        }
+    }
+}
+
+fn port_color(kind: PortKind) -> Color32 {
+    let [red, green, blue] = kind.color();
+    Color32::from_rgb(red, green, blue)
 }
 
 fn replace_char_range(

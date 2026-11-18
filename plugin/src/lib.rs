@@ -3,6 +3,7 @@ mod compiler;
 mod editor;
 mod engine;
 mod params;
+mod patch;
 mod portable_csound;
 mod portable_vst;
 mod score_files;

@@ -2793,6 +2793,8 @@ dependencies = [
  "parking_lot",
  "rustel-engine",
  "rustel-runtime",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
