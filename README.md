@@ -68,9 +68,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.13 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.13.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.13 --release --locked
+cargo build --package rustel-vst3@0.1.14 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.14.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.14 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -99,7 +99,7 @@ Start DAW playback after the status says **Ready**. Loading a preset only replac
 
 Rustel automatically loads saved scan results and checks for changed bundles when the plugin starts. Use **Scan VST3 plugins** to run that check again manually. Rustel searches `%LOCALAPPDATA%\Programs\Common\VST3`, `%CommonProgramFiles%\VST3`, and any folders added with **Browse for a plugin folder**. You can also enter multiple paths in the VST3 folder field, separated by semicolons. Custom folder choices are shared by Rustel instances using the same data directory and saved in `RustelData/vst/folders.txt`. The bundled `RustelVstWorker.exe` checks plugins one at a time in a separate process and should not open a console window. The editor shows the bundle and plugin class currently being checked. Each class has a 30-second limit; other bundles continue if a plugin times out. The overall scan can run for up to two hours. Results, including failures, are saved in `RustelData/vst/scan.json` and reused until a bundle changes. Delete only that file to retry all bundles; saved presets are kept. These expressions use plugin names exactly as shown in the list:
 
-Click **Open plugin list…** to open the searchable, resizable directory popup. It shows the scanned plugin count and groups results under Instruments or Effects / processors, then by VST3 category. The browser has **Insert instrument/effect** buttons that place a ready-to-edit example at the score caret. Sort by name, type, category, MIDI tag, or manual order; in manual order, use the arrows to rearrange plugins. Expand a plugin row to edit its display label or optional **MIDI output usable** tag. Those directory settings are saved in `RustelData/vst/directory.tsv`. Choose **MIDI source** to generate a MIDI-routing example to a Rustel synth or a scanned VSTi. The MIDI tag is your own note and does not test the plugin; choose the MIDI-source action only for plugins that output MIDI.
+Click **Open plugin list…** to open the searchable, resizable directory popup. It shows the scanned plugin count and groups results under Instruments or Effects / processors, then by VST3 category. Use **All plugins** to browse the full list or **MIDI index** to see plugins you have marked as MIDI sources. On a plugin row, click **Add to MIDI index** or **Remove from MIDI index**; this classification is saved in `RustelData/vst/directory.tsv`. MIDI sources remain visible in **All plugins** with their instrument/effect type. The tag is manual and does not test or change a plugin, so only add plugins that output MIDI. The **MIDI source** menu inserts a MIDI-routing example at the score caret.
 
 ```javascript
 note("c2 e2 g2").vsti("Your instrument")
@@ -115,7 +115,7 @@ Add an effect by chaining `.vst("Effect Name")` after the sound or instrument. E
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
 
-The editor header shows the plugin version, such as **v0.1.13**. Use that label to distinguish this build from older downloads.
+The editor header shows the plugin version, such as **v0.1.14**. Use that label to distinguish this build from older downloads.
 
 ## Visual patch editor
 
@@ -167,9 +167,9 @@ In **Open plugin list → MIDI source**, choose **Rustel sample**, **Rustel wave
 
 The Windows downloads include the official double-precision Csound 6.18.1 runtime and standard opcode DLLs; you do not need a separate Csound installation. In the portable ZIP, keep `CsoundRuntime` beside `Rustel.vst3`; the plugin automatically points the current DAW process at the bundled copy. Scan cache and presets for hosted plugins are kept in `RustelData` beside the package, unless `RUSTEL_CONFIG_DIR` is already set. The package does not change persistent Windows settings. The Microsoft Visual C++ 2015–2022 x64 runtime may also be needed; the installer checks for it and prints Microsoft's download link if it is missing. Rustel currently supports Csound 6.18 or later within the 6.x series, so this bundle does not use Csound 7.
 
-Csound is **off by default**. Enable **Allow native Csound** only for scores you trust: an orchestra can use native opcodes to access files and run processes with the DAW's permissions. Loading or saving an `.orc` in **Csound files…** automatically sets **Trusted .orc folder** to the portable `Scores` folder. For other files, enter the folder that contains them, then use Rustel's `await loadOrc("local:voice.orc")` in the score. The file loader confines text reads to that folder; it cannot restrict what the compiled orchestra does. Inline `loadCSound` definitions need no folder.
+Csound is **off by default**. Enable **Allow native Csound** only for scores you trust: an orchestra can use native opcodes to access files and run processes with the DAW's permissions. The portable `Scores` folder is selected automatically as **Trusted .orc folder** when the plugin starts; the ORC picker opens there, and ORCs selected from it are saved as relative references so they follow the portable package when it moves. Old saved references to a previous portable `Scores` location are rebased when the matching file is present. Loading or saving an `.orc` in **Csound files…** also sets this folder. Set **Trusted .orc folder** manually only when using ORCs elsewhere, then use `await loadOrc("local:voice.orc")` in the score. The file loader confines text reads to that folder; it cannot restrict what the compiled orchestra does. Inline `loadCSound` definitions need no folder.
 
-The portable package includes three FM instruments and matching `.strudel` scores in `Scores`: **FM Electric Piano** (`fm_electric_piano`), **FM Bass** (`fm_bass`), and **FM Bell** (`fm_bell`). Turn on **Allow native Csound**, set **Trusted .orc folder** to the package's full `Scores` path, then load a matching `.strudel` file from the plugin's **Load…** button and press **Evaluate**. The editor's Examples list also has one-click score snippets. Each orchestra uses Rustel's `.csoundm()` fields: `p4` is fractional MIDI pitch and `p5` is velocity-scaled level.
+The portable package includes three FM instruments and matching `.strudel` scores in `Scores`: **FM Electric Piano** (`fm_electric_piano`), **FM Bass** (`fm_bass`), and **FM Bell** (`fm_bell`). Turn on **Allow native Csound**, load a matching `.strudel` file from the plugin's **Load…** button, and press **Evaluate**. The portable `Scores` folder is trusted automatically. The editor's Examples list also has one-click score snippets. Each orchestra uses Rustel's `.csoundm()` fields: `p4` is fractional MIDI pitch and `p5` is velocity-scaled level.
 
 Example Csound score after enabling permission:
 

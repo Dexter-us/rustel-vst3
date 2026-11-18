@@ -795,8 +795,12 @@ fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
             instrument: InstrumentKind::Csound,
             orc_file: Some(path),
             ..
-        } if !std::path::Path::new(path).is_absolute() => {
-            Err("Choose an ORC file from disk before generating this patch.".into())
+        } if path.trim().is_empty()
+            || std::path::Path::new(path)
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir)) =>
+        {
+            Err("Choose an ORC file inside the trusted folder before generating this patch.".into())
         }
         PatchNodeKind::Expression { suffix, .. }
             if suffix.trim().is_empty() || !suffix.trim().starts_with('.') =>
@@ -814,20 +818,25 @@ fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
 }
 
 fn local_orc_path(path: &str, orchestra_root: &str) -> Result<String, String> {
-    let path = std::path::Path::new(path);
-    if !path.is_absolute() || orchestra_root.trim().is_empty() {
-        return Ok(path.to_string_lossy().into_owned());
+    let selected_path = std::path::Path::new(path);
+    if orchestra_root.trim().is_empty() {
+        return Err("Set Trusted .orc folder to the portable Scores folder.".into());
     }
-
     let root = std::path::Path::new(orchestra_root)
         .canonicalize()
-        .map_err(|_| "Set Trusted .orc folder to the selected orchestra's folder.".to_owned())?;
-    let absolute = path
-        .canonicalize()
-        .map_err(|_| "The selected ORC file is missing. Load it again from disk.".to_owned())?;
+        .map_err(|_| {
+            "The Trusted .orc folder is missing. Choose the portable Scores folder.".to_owned()
+        })?;
+    let absolute = if selected_path.is_absolute() {
+        selected_path.to_path_buf()
+    } else {
+        root.join(selected_path)
+    }
+    .canonicalize()
+    .map_err(|_| "The selected ORC file is missing. Load it again from disk.".to_owned())?;
     absolute
         .strip_prefix(root)
-        .map(|relative| relative.to_string_lossy().into_owned())
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
         .map_err(|_| {
             "The selected ORC is outside Trusted .orc folder. Load it again from its folder."
                 .to_owned()
@@ -942,6 +951,34 @@ mod tests {
         assert!(code.starts_with("await loadOrc(\"local:fm.orc\");"));
         assert!(code.contains(".csoundm(\"fm_voice\")"));
         std::fs::remove_dir_all(orchestra_root).expect("remove test folder");
+    }
+
+    #[test]
+    fn portable_csound_orc_generates_a_bundle_relative_load_path() {
+        let mut graph = PatchGraph::default();
+        let orchestra_root = test_folder("portable-relative-orc");
+        let orchestra_directory = orchestra_root.join("voices");
+        std::fs::create_dir_all(&orchestra_directory).expect("create portable ORC folder");
+        std::fs::write(orchestra_directory.join("fm.orc"), "instr fm_voice\nendin")
+            .expect("write portable orchestra");
+        let instrument = graph
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node.kind, PatchNodeKind::Instrument { .. }))
+            .expect("instrument");
+        instrument.kind = PatchNodeKind::Instrument {
+            instrument: InstrumentKind::Csound,
+            value: "fm_voice".into(),
+            orc_file: Some("voices/fm.orc".into()),
+        };
+
+        let code = graph
+            .generate_code_with_orchestra_root(&orchestra_root.to_string_lossy())
+            .expect("portable Csound patch generates");
+
+        assert!(code.starts_with("await loadOrc(\"local:voices/fm.orc\");"));
+        assert!(!code.contains(&orchestra_root.to_string_lossy().to_string()));
+        std::fs::remove_dir_all(orchestra_root).expect("remove portable ORC folder");
     }
 
     #[test]

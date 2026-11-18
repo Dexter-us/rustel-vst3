@@ -192,7 +192,7 @@
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
-      <span class="badge">Version 0.1.13</span>
+      <span class="badge">Version 0.1.14</span>
       <span class="badge">Manufacturer: Dexter U.S.</span>
       <span class="badge">Csound 6.18.1 bundled</span>
     </div>
@@ -267,7 +267,7 @@
       <section id="vst3">
         <h2>VST3 instruments and effects</h2>
         <p>Rustel automatically loads saved scan results and checks for changed bundles when the plugin starts. Click <strong>Scan VST3 plugins</strong> to run that check again manually. Rustel can host installed 64-bit VST3 plugins inside its score. The standard Windows folders are <code>%LOCALAPPDATA%\Programs\Common\VST3</code> and <code>%CommonProgramFiles%\VST3</code>. To include another location, click <strong>Browse for a plugin folder</strong>, choose a folder, then scan. You can also type multiple paths in <strong>Additional VST3 folders</strong>, separated by semicolons. Custom folders are shared by Rustel instances using the same data directory and saved in <code>RustelData/vst/folders.txt</code>.</p>
-        <p>Click <strong>Open plugin list…</strong> to open a searchable, resizable directory popup. It shows the scanned plugin count and groups results under Instruments or Effects / processors, then by VST3 category. Place the caret in the score and click <strong>Insert instrument</strong> or <strong>Insert effect</strong> to add an example using the exact plugin name. Sort the directory by name, type, category, MIDI tag, or manual order; use the arrows to rearrange items in manual order. Expand a row to edit its display label or optional <strong>MIDI output usable</strong> tag. Your labels, tags, and ordering are saved in <code>RustelData/vst/directory.tsv</code>. The MIDI tag is your own note, not a plugin test. Choose <strong>MIDI source</strong> to generate a MIDI-routing example to a Rustel synth, sample, wavetable, graph, Csound instrument, or scanned VST instrument; use that action only for plugins that output MIDI.</p>
+        <p>Click <strong>Open plugin list…</strong> to open a searchable, resizable directory popup. Use <strong>All plugins</strong> to browse scanned VST3s by instrument/effect type and category, or <strong>MIDI index</strong> to view plugins you have marked as MIDI sources. On a plugin row, choose <strong>Add to MIDI index</strong> or <strong>Remove from MIDI index</strong>. These manual tags are saved with your directory settings in <code>RustelData/vst/directory.tsv</code>. MIDI sources also stay in <strong>All plugins</strong> with their instrument/effect classification. A MIDI index tag does not test or change a plugin; add only plugins that output MIDI. Place the caret in the score and choose the row’s <strong>MIDI source</strong> menu to insert a MIDI-routing example to a Rustel synth, sample, wavetable, graph, Csound instrument, or scanned VST instrument.</p>
         <p>The bundled <code>RustelVstWorker.exe</code> examines each plugin in a separate helper process. The editor shows the plugin or bundle currently being checked. Each plugin class has a 30-second limit; if one hangs, its helper process is stopped and scanning continues with other bundles. The full scan can run for up to two hours. The helper should run without opening a console window and belongs beside <code>Rustel.vst3</code> in the portable package; it is not itself a plugin folder to scan.</p>
         <h3>Play a VST3 instrument</h3>
         <p><code>.vsti("Plugin Name")</code> sends score notes—including pitch, velocity, and note length—to the named instrument:</p>
@@ -304,10 +304,10 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <ol>
           <li>Edit each block's fields. For VST3 blocks, choose a scanned plugin or enter its name. Mark a MIDI VST block as an effect or an instrument to select the correct Rustel call.</li>
           <li>Click a block's output port, then click a compatible input port. Amber cables are MIDI; teal cables are audio. Incompatible port types are rejected.</li>
-          <li>Drag a block's title to move it, or drag empty canvas to pan. Remove a block with its × button, open <strong>Connections</strong> to remove a cable, or choose <strong>Clear all blocks…</strong> to reset the canvas.</li>
+          <li>Drag the <strong>⋮⋮</strong> handle on a block to move it. Hold <strong>Space</strong> while dragging the background to pan. Remove a block with its × button, open <strong>Connections</strong> to remove a cable, or choose <strong>Clear all blocks…</strong> to reset the canvas.</li>
           <li>Click <strong>Generate Code</strong>. Rustel validates the graph and replaces the current score draft with generated code. Switch to <strong>Score</strong>, review it, then press <strong>Evaluate</strong>.</li>
         </ol>
-        <p>For Csound, choose <strong>Load ORC from disk…</strong> inside the Csound instrument block, then enter the instrument name declared in that file. The selected file’s folder becomes the trusted ORC folder, and generated code loads the file relative to that folder rather than the DAW’s current directory. Enable <strong>Allow native Csound</strong>, generate the code, review it in Score, then press <strong>Evaluate</strong>. Only load Csound source you trust.</p>
+        <p>For Csound, choose <strong>Load ORC from disk…</strong> inside the Csound instrument block, then enter the instrument name declared in that file. The picker opens in the portable <code>Scores</code> folder; ORCs there are saved as relative references and follow the package if it moves. Rustel updates the trusted folder and rebases older saved portable paths when possible. Enable <strong>Allow native Csound</strong>, generate the code, review it in Score, then press <strong>Evaluate</strong>. Only load Csound source you trust.</p>
         <p>The default patch is a note pattern connected to a Rustel synth and Audio output. A hosted MIDI VST source can feed one Rustel synth, sample, wavetable, KabelSalat graph, Csound instrument, or hosted VSTi target. The graph is saved in the DAW's plugin state. Generation is one-way: Rustel does not convert handwritten score code back into blocks.</p>
         <p>For an ordinary audio-effect chain, connect a note pattern to an instrument, connect its audio output to a VST3 effect, then connect that effect to Audio output. The current renderer does not apply a downstream audio effect to the separately rendered branch from a hosted MIDI target.</p>
         <pre><code>(note("c3 e3 g3")).vsti("Your instrument").vst("Your effect", { mix: 0.5 })</code></pre>
@@ -343,12 +343,12 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
 
       <section id="files">
         <h2>Load and save scores</h2>
-        <p>The plugin’s score and Csound source controls use the portable <code>Scores</code> folder beside the plugin bundle. Rustel creates that folder when needed. This keeps your files with the extracted portable copy instead of requiring a fixed Windows user folder.</p>
+        <p>The plugin’s score and Csound source controls use the portable <code>Scores</code> folder beside the plugin bundle. Rustel creates that folder when needed, selects it as the default trusted ORC folder, and prefers it when opening the ORC picker. This keeps your files with the extracted portable copy instead of requiring a fixed Windows user folder.</p>
         <ul>
           <li>Use <strong>Load</strong> and <strong>Save</strong> for Rustel score text in <code>.strudel</code> or <code>.txt</code> files.</li>
           <li>Use <strong>Csound files…</strong> to load or save separate <code>.orc</code> and <code>.csd</code> source text. Loading or saving an <code>.orc</code> automatically sets <strong>Trusted .orc folder</strong> to the portable <code>Scores</code> folder. This editor does not replace the Rustel score or run when you press Evaluate.</li>
           <li>After enabling Csound, reference a saved <code>.orc</code> with <code>await loadOrc("local:voice.orc")</code>. Csound source is code; only open files you trust.</li>
-          <li>Keep the folder with the plugin when moving the portable setup to another location.</li>
+          <li>Keep the folder with the plugin when moving the portable setup. ORC choices from this folder are saved relative to it, not to an old <code>C:\</code> path.</li>
         </ul>
         <p>DAW project state also stores the score draft, last accepted score, phrase settings, gain, transport options, and window state.</p>
       </section>
@@ -375,7 +375,7 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         </ul>
         <ol>
           <li>Turn on <strong>Allow native Csound</strong>.</li>
-          <li>Set <strong>Trusted .orc folder</strong> to the full path of the portable package's <code>Scores</code> folder.</li>
+          <li>Rustel automatically sets <strong>Trusted .orc folder</strong> to the package's <code>Scores</code> folder.</li>
           <li>Use <strong>Load…</strong> to open the matching <code>.strudel</code> score, or choose its FM example in the editor's Examples list.</li>
           <li>Press <strong>Evaluate</strong>, then start or resume playback.</li>
         </ol>
@@ -383,7 +383,7 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
         <pre><code>await loadOrc("local:fm-electric-piano.orc");
 note("c4 eb4 g4 c5").csoundm("fm_electric_piano").gain(0.55)</code></pre>
         <h3>Load a trusted orchestra file</h3>
-        <p>Enter the full path to a trusted folder in <strong>Trusted .orc folder</strong>, then load a file from that folder in the score:</p>
+        <p>Rustel uses the portable <code>Scores</code> folder by default. For an ORC elsewhere, enter that folder in <strong>Trusted .orc folder</strong>, then load the file in the score:</p>
         <pre><code>await loadOrc("local:voice.orc")</code></pre>
         <p>Only load Csound scores and orchestra files you trust. Native opcodes can access files and run processes with the same permissions as the DAW. The trusted-folder setting limits where Rustel reads the orchestra text; it cannot limit what compiled orchestra code can do.</p>
         <p>Csound phrases are prepared off the audio callback and repeat at the chosen tempo. This plugin is an instrument: it does not accept live audio from another DAW track as an effect input.</p>

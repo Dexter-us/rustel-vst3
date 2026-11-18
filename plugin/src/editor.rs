@@ -20,6 +20,7 @@ struct ScoreFileUi {
     dialog: Option<ScoreDialog>,
     folder_picker: Option<FolderPicker>,
     csound_editor: Option<CsoundSourceUi>,
+    csound_root_initialized: bool,
     vst_folders_loaded: bool,
     editor_selection: Option<std::ops::Range<usize>>,
     pending_insert: Option<String>,
@@ -31,6 +32,7 @@ struct ScoreFileUi {
     midi_graph_target: String,
     plugin_directory_open: bool,
     plugin_search: String,
+    plugin_directory_midi_only: bool,
     patch_graph: PatchGraph,
     patch_loaded: bool,
     patch_screen: bool,
@@ -133,12 +135,54 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     Err(error) => file_ui.message = error,
                 }
             }
+            if !file_ui.csound_root_initialized {
+                file_ui.csound_root_initialized = true;
+                if let Ok(scores) = crate::score_files::prepare_scores_directory() {
+                    let current_root = params.csound_orchestra_root.lock().clone();
+                    if should_use_portable_orchestra_root(&current_root, &scores)
+                        && set_trusted_orchestra_root_value(&scores, &params)
+                    {
+                        mark_dirty(setter, &params);
+                    }
+                }
+            }
             if !file_ui.patch_loaded {
                 file_ui.patch_loaded = true;
                 let saved_patch = params.patch_graph.lock().clone();
                 if !saved_patch.trim().is_empty() {
                     match PatchGraph::from_json(&saved_patch) {
-                        Ok(graph) => file_ui.patch_graph = graph,
+                        Ok(mut graph) => {
+                            let has_orc = graph.nodes.iter().any(|node| {
+                                matches!(
+                                    &node.kind,
+                                    PatchNodeKind::Instrument {
+                                        instrument: InstrumentKind::Csound,
+                                        orc_file: Some(_),
+                                        ..
+                                    }
+                                )
+                            });
+                            let mut patch_changed = false;
+                            if has_orc
+                                && let Ok(scores) = crate::score_files::prepare_scores_directory()
+                            {
+                                patch_changed = rebase_portable_orc_references(&mut graph, &scores);
+                                if graph_has_relative_orc(&graph) {
+                                    patch_changed |=
+                                        set_trusted_orchestra_root_value(&scores, &params);
+                                }
+                            }
+                            file_ui.patch_graph = graph;
+                            if patch_changed {
+                                match file_ui.patch_graph.to_json() {
+                                    Ok(saved) => {
+                                        *params.patch_graph.lock() = saved;
+                                        mark_dirty(setter, &params);
+                                    }
+                                    Err(error) => file_ui.patch_message = error,
+                                }
+                            }
+                        }
                         Err(error) => file_ui.patch_message = error,
                     }
                 }
@@ -610,11 +654,12 @@ fn insert_code_at_char_range(
     (result, start + insertion.chars().count())
 }
 
-const PATCH_NODE_WIDTH: f32 = 220.0;
-const PATCH_NODE_HEIGHT: f32 = 172.0;
-const PATCH_NODE_COLUMN_STEP: f32 = 240.0;
-const PATCH_NODE_ROW_STEP: f32 = 240.0;
-const PATCH_NODE_COLLISION_HEIGHT: f32 = PATCH_NODE_HEIGHT + 48.0;
+const PATCH_NODE_WIDTH: f32 = 184.0;
+const PATCH_NODE_HEIGHT: f32 = 140.0;
+const PATCH_NODE_CONTENT_HEIGHT: f32 = 96.0;
+const PATCH_NODE_COLUMN_STEP: f32 = 204.0;
+const PATCH_NODE_ROW_STEP: f32 = 208.0;
+const PATCH_NODE_COLLISION_HEIGHT: f32 = PATCH_NODE_HEIGHT + 56.0;
 
 #[derive(Clone, Copy)]
 enum PluginPickerFilter {
@@ -647,7 +692,7 @@ impl PluginPickerFilter {
             Self::Instrument => "No scanned VST3 instruments are available.",
             Self::Effect => "No scanned VST3 plugins are available.",
             Self::MidiSource => {
-                "No plugins are tagged for MIDI output. In Plugin List, open a plugin row and enable “MIDI output usable”."
+                "No plugins are in the MIDI index. Open Plugin list, choose All plugins, then click Add to MIDI index on a plugin that outputs MIDI."
             }
         }
     }
@@ -814,7 +859,7 @@ fn draw_patch_editor(
     }
     if midi_source_count == 0 {
         ui.small(
-            "The MIDI source list uses manual tags. In Plugin list, expand a plugin and enable “MIDI output usable”.",
+            "Add MIDI-outputting plugins from Plugin list → All plugins → Add to MIDI index. This tag does not test the plugin.",
         );
     }
 
@@ -852,7 +897,7 @@ fn draw_patch_editor(
     }
 
     ui.horizontal_wrapped(|ui| {
-        ui.small("Right-click the canvas to add a block. Click an output, then a compatible input to connect; drag a block title to move it.");
+        ui.small("Right-click to add blocks. Click an output, then a matching input to connect. Drag the ⋮⋮ handle to move a block; hold Space and drag the background to pan.");
         ui.label(RichText::new("MIDI").color(port_color(PortKind::Midi)));
         ui.label(RichText::new("Audio").color(port_color(PortKind::Audio)));
         if file_ui.patch_wire_from.is_some() && ui.small_button("Cancel cable").clicked() {
@@ -904,7 +949,7 @@ fn draw_patch_editor(
     let canvas_size = egui::vec2(available.x.max(240.0), available.y.max(280.0));
     let (canvas_rect, canvas_response) =
         ui.allocate_exact_size(canvas_size, egui::Sense::click_and_drag());
-    if canvas_response.dragged() {
+    if canvas_response.dragged() && ui.input(|input| input.key_down(egui::Key::Space)) {
         file_ui.patch_pan += canvas_response.drag_delta();
     }
     if canvas_response.secondary_clicked() {
@@ -1032,42 +1077,64 @@ fn draw_patch_editor(
                 egui::Frame::group(ui.style())
                     .fill(Color32::from_rgb(39, 43, 53))
                     .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(83, 91, 108)))
-                    .inner_margin(egui::Margin::same(8))
+                    .inner_margin(egui::Margin::same(6))
                     .show(ui, |ui| {
                         ui.set_min_size(egui::vec2(
-                            PATCH_NODE_WIDTH - 16.0,
-                            PATCH_NODE_HEIGHT - 16.0,
+                            PATCH_NODE_WIDTH - 12.0,
+                            PATCH_NODE_HEIGHT - 12.0,
                         ));
+                        ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
+                        let mut node_drag_delta = egui::Vec2::ZERO;
                         ui.horizontal(|ui| {
-                            let drag = ui.add(
-                                egui::Label::new(
-                                    RichText::new(node.kind.title())
-                                        .strong()
-                                        .color(Color32::from_rgb(202, 187, 246)),
+                            let handle = ui
+                                .add(
+                                    egui::Label::new(
+                                        RichText::new("⋮⋮").color(Color32::from_gray(160)),
+                                    )
+                                    .sense(egui::Sense::drag()),
                                 )
-                                .sense(egui::Sense::drag()),
-                            );
+                                .on_hover_text("Drag to move this block");
+                            if handle.dragged() {
+                                node_drag_delta = handle.drag_delta();
+                            }
+                            let drag = ui
+                                .add(
+                                    egui::Label::new(
+                                        RichText::new(node.kind.title())
+                                            .strong()
+                                            .color(Color32::from_rgb(202, 187, 246)),
+                                    )
+                                    .sense(egui::Sense::drag()),
+                                )
+                                .on_hover_text("Drag to move this block");
                             if drag.dragged() {
-                                let delta = drag.drag_delta();
-                                node.position[0] =
-                                    (node.position[0] + delta.x).clamp(-4096.0, 4096.0);
-                                node.position[1] =
-                                    (node.position[1] + delta.y).clamp(-4096.0, 4096.0);
-                                actions.changed = true;
+                                node_drag_delta = drag.drag_delta();
                             }
                             if ui.small_button("×").on_hover_text("Remove node").clicked() {
                                 actions.remove_clicked = true;
                             }
                         });
+                        if node_drag_delta != egui::Vec2::ZERO {
+                            node.position[0] =
+                                (node.position[0] + node_drag_delta.x).clamp(-4096.0, 4096.0);
+                            node.position[1] =
+                                (node.position[1] + node_drag_delta.y).clamp(-4096.0, 4096.0);
+                            actions.changed = true;
+                        }
                         ui.separator();
-                        actions.changed |= draw_patch_node_fields(
-                            ui,
-                            &mut node.kind,
-                            id,
-                            shared,
-                            &mut file_ui.folder_picker,
-                            params,
-                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt(("rustel-patch-node-fields", id))
+                            .max_height(PATCH_NODE_CONTENT_HEIGHT)
+                            .show(ui, |ui| {
+                                actions.changed |= draw_patch_node_fields(
+                                    ui,
+                                    &mut node.kind,
+                                    id,
+                                    shared,
+                                    &mut file_ui.folder_picker,
+                                    params,
+                                );
+                            });
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if let Some(input) = node.kind.input_kind() {
@@ -1282,7 +1349,8 @@ fn draw_patch_node_fields(
                         }
                     });
                     if let Some(path) = orc_file.as_deref() {
-                        if !std::path::Path::new(path).is_file() {
+                        let root = params.csound_orchestra_root.lock().clone();
+                        if !resolved_orc_path(path, &root).is_file() {
                             ui.colored_label(Color32::YELLOW, "The selected ORC file is missing.");
                         }
                     }
@@ -1742,9 +1810,22 @@ fn draw_plugin_directory(ctx: &egui::Context, file_ui: &mut ScoreFileUi, shared:
             let plugin_message = shared.vst_plugins_message.lock().clone();
             let saved_sort = *shared.vst_sort.lock();
             let mut sort = saved_sort;
+            let midi_source_count = plugins.iter().filter(|plugin| plugin.midi_source).count();
 
             ui.horizontal(|ui| {
                 ui.strong(format!("{} scanned", plugins.len()));
+                ui.selectable_value(
+                    &mut file_ui.plugin_directory_midi_only,
+                    false,
+                    format!("All plugins ({})", plugins.len()),
+                );
+                ui.selectable_value(
+                    &mut file_ui.plugin_directory_midi_only,
+                    true,
+                    format!("MIDI index ({midi_source_count})"),
+                );
+            });
+            ui.horizontal(|ui| {
                 ui.add(
                     TextEdit::singleline(&mut file_ui.plugin_search)
                         .desired_width(260.0)
@@ -1775,11 +1856,13 @@ fn draw_plugin_directory(ctx: &egui::Context, file_ui: &mut ScoreFileUi, shared:
                 .iter()
                 .enumerate()
                 .filter_map(|(index, plugin)| {
-                    plugin_matches_search(plugin, &query).then_some(index)
+                    let in_selected_view =
+                        !file_ui.plugin_directory_midi_only || plugin.midi_source;
+                    (in_selected_view && plugin_matches_search(plugin, &query)).then_some(index)
                 })
                 .collect::<Vec<_>>();
             ui.small(format!(
-                "Showing {} of {}. VST3 categories are grouped below; your MIDI tags are marked separately.",
+                "Showing {} of {}. MIDI sources also stay in All plugins with their instrument/effect type.",
                 visible_indices.len(),
                 plugins.len()
             ));
@@ -1797,15 +1880,23 @@ fn draw_plugin_directory(ctx: &egui::Context, file_ui: &mut ScoreFileUi, shared:
                     if plugins.is_empty() {
                         ui.colored_label(Color32::LIGHT_BLUE, &plugin_message);
                         ui.small("After scanning, open this list to browse all found instruments and effects.");
+                    } else if visible_indices.is_empty()
+                        && file_ui.plugin_directory_midi_only
+                        && midi_source_count == 0
+                    {
+                        ui.label("The MIDI index is empty.");
+                        ui.small("Choose All plugins and use Add to MIDI index on plugins that output MIDI.");
                     } else if visible_indices.is_empty() {
                         ui.label("No plugins match that search.");
                     } else if matches!(
                         sort,
                         crate::vst_catalog::VstSort::Manual
                             | crate::vst_catalog::VstSort::MidiFirst
-                    ) {
+                    ) || file_ui.plugin_directory_midi_only
+                    {
                         let can_reorder = sort == crate::vst_catalog::VstSort::Manual
-                            && query.is_empty();
+                            && query.is_empty()
+                            && !file_ui.plugin_directory_midi_only;
                         for &index in &visible_indices {
                             draw_plugin_row(
                                 ui,
@@ -1823,6 +1914,10 @@ fn draw_plugin_directory(ctx: &egui::Context, file_ui: &mut ScoreFileUi, shared:
                         }
                         if sort == crate::vst_catalog::VstSort::Manual && !query.is_empty() {
                             ui.small("Clear the search to rearrange the full manual list.");
+                        } else if sort == crate::vst_catalog::VstSort::Manual
+                            && file_ui.plugin_directory_midi_only
+                        {
+                            ui.small("Choose All plugins to change the full manual order.");
                         }
                     } else {
                         let mut groups =
@@ -1947,6 +2042,15 @@ fn draw_plugin_row(
                 file_ui.pending_insert = Some(plugin_example(&plugin.name, plugin.instrument));
                 *close_after_insert = true;
             }
+            let midi_index_label = if plugin.midi_source {
+                "Remove from MIDI index"
+            } else {
+                "Add to MIDI index"
+            };
+            if ui.small_button(midi_index_label).clicked() {
+                plugin.midi_source = !plugin.midi_source;
+                *directory_changed = true;
+            }
             ui.menu_button("MIDI source", |ui| {
                 ui.small("For a plugin that outputs MIDI; the tag is optional.");
                 if ui.button("Route to Rustel sine").clicked() {
@@ -2031,7 +2135,7 @@ fn draw_plugin_row(
                 });
             }
         });
-        ui.collapsing("Edit label and MIDI tag", |ui| {
+        ui.collapsing("Edit display label", |ui| {
             let mut label = plugin.display_label.clone();
             let response = ui.add(
                 TextEdit::singleline(&mut label)
@@ -2042,15 +2146,6 @@ fn draw_plugin_row(
                 plugin.display_label = label;
                 *directory_changed = true;
             }
-            let mut midi_source = plugin.midi_source;
-            if ui
-                .checkbox(&mut midi_source, "MIDI output usable")
-                .changed()
-            {
-                plugin.midi_source = midi_source;
-                *directory_changed = true;
-            }
-            ui.small("The MIDI tag is your note; it does not test or change the plugin.");
         });
     });
 }
@@ -2176,7 +2271,8 @@ fn start_folder_picker(file_ui: &mut ScoreFileUi) {
 
 fn start_orc_picker(folder_picker: &mut Option<FolderPicker>, node_id: u64, params: &RustelParams) {
     let trusted_root = std::path::PathBuf::from(params.csound_orchestra_root.lock().as_str());
-    let directory = trusted_root.is_dir().then_some(trusted_root);
+    let portable_scores = crate::score_files::prepare_scores_directory().ok();
+    let directory = orc_picker_start_directory(&trusted_root, portable_scores);
     let directories = directory
         .as_deref()
         .map(list_child_directories)
@@ -2195,13 +2291,152 @@ fn start_orc_picker(folder_picker: &mut Option<FolderPicker>, node_id: u64, para
     });
 }
 
+fn orc_picker_start_directory(
+    trusted_root: &std::path::Path,
+    portable_scores: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    portable_scores
+        .filter(|directory| directory.is_dir())
+        .or_else(|| trusted_root.is_dir().then(|| trusted_root.to_path_buf()))
+}
+
+fn should_use_portable_orchestra_root(saved_root: &str, portable_scores: &std::path::Path) -> bool {
+    let saved_root = saved_root.trim();
+    if saved_root.is_empty() {
+        return true;
+    }
+    let saved_path = std::path::Path::new(saved_root);
+    if !saved_path.is_dir() || is_filesystem_root(saved_path) {
+        return true;
+    }
+    let is_scores_folder = saved_path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("Scores"));
+    is_scores_folder && saved_path.canonicalize().ok() != portable_scores.canonicalize().ok()
+}
+
+fn is_filesystem_root(path: &std::path::Path) -> bool {
+    path.is_absolute() && path.components().count() <= 2
+}
+
+fn portable_orc_reference(path: &str, scores_root: &std::path::Path) -> Option<String> {
+    let path = std::path::Path::new(path);
+    if let Some(relative) = normalized_relative_orc_path(path) {
+        return Some(relative);
+    }
+
+    let canonical_root = scores_root
+        .canonicalize()
+        .unwrap_or_else(|_| scores_root.into());
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Ok(relative) = canonical_path.strip_prefix(&canonical_root) {
+        return normalized_relative_orc_path(relative);
+    }
+
+    let relative = relative_after_scores_folder(path)?;
+    canonical_root
+        .join(&relative)
+        .is_file()
+        .then(|| normalized_relative_orc_path(&relative))
+        .flatten()
+}
+
+fn normalized_relative_orc_path(path: &std::path::Path) -> Option<String> {
+    use std::path::Component;
+
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn relative_after_scores_folder(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+
+    let components = path.components().collect::<Vec<_>>();
+    let scores_index = components.iter().rposition(|component| {
+        matches!(
+            component,
+            Component::Normal(name) if name.to_string_lossy().eq_ignore_ascii_case("Scores")
+        )
+    })?;
+    let mut relative = std::path::PathBuf::new();
+    for component in components.iter().skip(scores_index + 1) {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            _ => return None,
+        }
+    }
+    (!relative.as_os_str().is_empty()).then_some(relative)
+}
+
+fn rebase_portable_orc_references(graph: &mut PatchGraph, scores_root: &std::path::Path) -> bool {
+    let mut changed = false;
+    for node in &mut graph.nodes {
+        if let PatchNodeKind::Instrument {
+            instrument: InstrumentKind::Csound,
+            orc_file: Some(path),
+            ..
+        } = &mut node.kind
+            && let Some(relative) = portable_orc_reference(path, scores_root)
+            && *path != relative
+        {
+            *path = relative;
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn graph_has_relative_orc(graph: &PatchGraph) -> bool {
+    graph.nodes.iter().any(|node| {
+        matches!(
+            &node.kind,
+            PatchNodeKind::Instrument {
+                instrument: InstrumentKind::Csound,
+                orc_file: Some(path),
+                ..
+            } if !std::path::Path::new(path).is_absolute()
+        )
+    })
+}
+
+fn resolved_orc_path(path: &str, trusted_root: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::path::Path::new(trusted_root).join(path)
+    }
+}
+
+fn set_trusted_orchestra_root_value(folder: &std::path::Path, params: &RustelParams) -> bool {
+    let folder = folder
+        .canonicalize()
+        .unwrap_or_else(|_| folder.to_path_buf());
+    let folder = folder.to_string_lossy().into_owned();
+    let mut current = params.csound_orchestra_root.lock();
+    if *current == folder {
+        return false;
+    }
+    *current = folder;
+    true
+}
+
 #[cfg(test)]
 mod vst_code_generation_tests {
     use super::{
         PluginPickerFilter, find_vst_call_at_char, insert_code_at_char_range, insert_vst_parameter,
-        list_orc_files, next_open_patch_position, plugin_category_group, plugin_example,
-        plugin_matches_search, plugin_midi_example, plugin_midi_target_example,
-        plugin_picker_label, plugin_picker_matches, replace_char_range, sort_vst_plugins,
+        list_orc_files, next_open_patch_position, orc_picker_start_directory,
+        plugin_category_group, plugin_example, plugin_matches_search, plugin_midi_example,
+        plugin_midi_target_example, plugin_picker_label, plugin_picker_matches,
+        portable_orc_reference, rebase_portable_orc_references, replace_char_range,
+        resolved_orc_path, should_use_portable_orchestra_root, sort_vst_plugins,
         text_at_char_range, trusted_orchestra_folder,
     };
     use crate::{
@@ -2447,7 +2682,7 @@ mod vst_code_generation_tests {
         let middle_node = graph.nodes[1].id;
         assert!(graph.remove_node(middle_node));
 
-        assert_eq!(next_open_patch_position(&graph), [14.0, 264.0]);
+        assert_eq!(next_open_patch_position(&graph), [218.0, 24.0]);
     }
 
     #[test]
@@ -2481,6 +2716,113 @@ mod vst_code_generation_tests {
             trusted_orchestra_folder(std::path::Path::new("Scores/project.csd")),
             None
         );
+    }
+
+    #[test]
+    fn orc_picker_prefers_the_portable_scores_folder() {
+        let base =
+            std::env::temp_dir().join(format!("rustel-orc-picker-start-{}", std::process::id()));
+        let portable_scores = base.join("Portable").join("Scores");
+        let stale_root = base.join("C-drive-root");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&portable_scores).expect("create portable Scores folder");
+        fs::create_dir_all(&stale_root).expect("create stale trusted folder");
+
+        assert_eq!(
+            orc_picker_start_directory(&stale_root, Some(portable_scores.clone())),
+            Some(portable_scores)
+        );
+
+        fs::remove_dir_all(base).expect("remove temporary ORC picker folders");
+    }
+
+    #[test]
+    fn stale_scores_and_drive_roots_are_replaced_with_portable_scores() {
+        let base =
+            std::env::temp_dir().join(format!("rustel-orc-root-migration-{}", std::process::id()));
+        let portable_scores = base.join("Current").join("Scores");
+        let old_scores = base.join("Old").join("Scores");
+        let custom_folder = base.join("ExternalOrchestra");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&portable_scores).expect("create current Scores folder");
+        fs::create_dir_all(&old_scores).expect("create old Scores folder");
+        fs::create_dir_all(&custom_folder).expect("create custom orchestra folder");
+
+        assert!(should_use_portable_orchestra_root("", &portable_scores));
+        assert!(should_use_portable_orchestra_root("/", &portable_scores));
+        assert!(should_use_portable_orchestra_root(
+            &old_scores.to_string_lossy(),
+            &portable_scores
+        ));
+        assert!(!should_use_portable_orchestra_root(
+            &portable_scores.to_string_lossy(),
+            &portable_scores
+        ));
+        assert!(!should_use_portable_orchestra_root(
+            &custom_folder.to_string_lossy(),
+            &portable_scores
+        ));
+
+        fs::remove_dir_all(base).expect("remove temporary orchestra folders");
+    }
+
+    #[test]
+    fn saved_portable_orc_path_rebases_after_the_bundle_moves() {
+        let base = std::env::temp_dir().join(format!(
+            "rustel-portable-orc-relocation-{}",
+            std::process::id()
+        ));
+        let old_file = base
+            .join("OldLocation")
+            .join("RustelPortable")
+            .join("Scores")
+            .join("voices")
+            .join("fm.orc");
+        let new_scores = base
+            .join("NewLocation")
+            .join("RustelPortable")
+            .join("Scores");
+        fs::create_dir_all(old_file.parent().expect("old ORC parent"))
+            .expect("create old package path");
+        fs::create_dir_all(new_scores.join("voices")).expect("create moved package path");
+        fs::write(
+            new_scores.join("voices").join("fm.orc"),
+            "instr voice\nendin",
+        )
+        .expect("write portable orchestra");
+
+        assert_eq!(
+            portable_orc_reference(&old_file.to_string_lossy(), &new_scores),
+            Some("voices/fm.orc".into())
+        );
+
+        let mut graph = PatchGraph::default();
+        let instrument = graph
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node.kind, crate::patch::PatchNodeKind::Instrument { .. }))
+            .expect("default instrument");
+        instrument.kind = crate::patch::PatchNodeKind::Instrument {
+            instrument: crate::patch::InstrumentKind::Csound,
+            value: "voice".into(),
+            orc_file: Some(old_file.to_string_lossy().into_owned()),
+        };
+        assert!(rebase_portable_orc_references(&mut graph, &new_scores));
+        let rebased = graph
+            .nodes
+            .iter()
+            .find_map(|node| match &node.kind {
+                crate::patch::PatchNodeKind::Instrument { orc_file, .. } => orc_file.as_deref(),
+                _ => None,
+            })
+            .expect("rebased ORC path");
+        assert_eq!(rebased, "voices/fm.orc");
+        assert_eq!(
+            resolved_orc_path(rebased, &new_scores.to_string_lossy()),
+            new_scores.join("voices").join("fm.orc")
+        );
+
+        fs::remove_dir_all(base).expect("remove temporary portable packages");
     }
 }
 
@@ -2642,6 +2984,20 @@ fn attach_orc_file(
     let parent = selected
         .parent()
         .ok_or_else(|| "The selected ORC file has no parent folder.".to_owned())?;
+    let portable_scores = crate::score_files::prepare_scores_directory()
+        .ok()
+        .and_then(|directory| directory.canonicalize().ok());
+    let portable_reference = portable_scores
+        .as_deref()
+        .and_then(|root| portable_orc_reference(&selected.to_string_lossy(), root));
+    let trusted_root = if portable_reference.is_some() {
+        portable_scores
+            .clone()
+            .expect("portable reference has a portable Scores directory")
+    } else {
+        parent.to_path_buf()
+    };
+    let stored_path = portable_reference.unwrap_or_else(|| selected.to_string_lossy().into_owned());
     let mut graph = file_ui.patch_graph.clone();
     let current_root = std::path::PathBuf::from(params.csound_orchestra_root.lock().as_str())
         .canonicalize()
@@ -2657,7 +3013,14 @@ fn attach_orc_file(
                 ..
             } => {
                 let path = std::path::PathBuf::from(path);
-                Some(if path.is_absolute() {
+                let portable_path = portable_scores
+                    .as_deref()
+                    .and_then(|root| portable_orc_reference(&path.to_string_lossy(), root))
+                    .zip(portable_scores.as_deref())
+                    .map(|(relative, root)| root.join(relative));
+                Some(if let Some(portable_path) = portable_path {
+                    portable_path
+                } else if path.is_absolute() {
                     path
                 } else if let Some(root) = current_root.as_deref() {
                     root.join(path)
@@ -2668,11 +3031,11 @@ fn attach_orc_file(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let update_root = current_root.as_deref() != Some(parent);
+    let update_root = current_root.as_deref() != Some(trusted_root.as_path());
     if update_root
         && existing_orcs
             .iter()
-            .any(|path| !path_is_within(parent, path))
+            .any(|path| !path_is_within(&trusted_root, path))
     {
         return Err(
             "Keep selected ORC files in one trusted folder. Clear other ORC selections before choosing a different folder."
@@ -2689,12 +3052,12 @@ fn attach_orc_file(
             instrument: InstrumentKind::Csound,
             orc_file,
             ..
-        } => *orc_file = Some(selected.to_string_lossy().into_owned()),
+        } => *orc_file = Some(stored_path),
         _ => return Err("The selected block is no longer a Csound instrument.".into()),
     }
     let saved = graph.to_json()?;
     if update_root {
-        *params.csound_orchestra_root.lock() = parent.to_string_lossy().into_owned();
+        *params.csound_orchestra_root.lock() = trusted_root.to_string_lossy().into_owned();
     }
     *params.patch_graph.lock() = saved;
     file_ui.patch_graph = graph;
@@ -2739,7 +3102,7 @@ fn draw_folder_picker(
         .show(ctx, |ui| {
             if is_orc_picker {
                 ui.label("Choose a local .orc file for this Csound instrument block.");
-                ui.small("Choosing a file trusts its containing folder for ORC loading.");
+                ui.small("Starts in the portable Scores folder. Portable ORCs are saved as relative paths.");
             } else {
                 ui.label("Choose a folder that contains .vst3 plugins.");
             }
@@ -3106,14 +3469,9 @@ fn set_trusted_orchestra_folder(
     let Some(folder) = trusted_orchestra_folder(path) else {
         return;
     };
-    let folder = folder.to_string_lossy().into_owned();
-    let mut current = params.csound_orchestra_root.lock();
-    if *current == folder {
-        return;
+    if set_trusted_orchestra_root_value(folder, params) {
+        mark_dirty(setter, params);
     }
-    *current = folder;
-    drop(current);
-    mark_dirty(setter, params);
 }
 
 fn start_score_dialog(file_ui: &mut ScoreFileUi, mode: ScoreDialogMode) {
