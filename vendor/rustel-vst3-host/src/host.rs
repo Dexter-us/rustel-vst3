@@ -233,6 +233,8 @@ pub struct PluginInfo {
     /// The name of the plugin, or the name of the bundle before its load
     /// or its test.
     pub name: String,
+    /// Stable VST3 class id, used to retain per-plugin directory settings.
+    pub class_id: String,
     pub bundle: PathBuf,
     pub vendor: String,
     /// For example "Fx|Reverb". Empty before the load or the test of the
@@ -2370,6 +2372,7 @@ impl Host {
                 let latencies = latencies.filter(|((key, _), _)| row_of(key.plugin) == Some(row));
                 PluginInfo {
                     name: entry.name.clone(),
+                    class_id: entry.class.clone(),
                     bundle: entry.bundle.clone(),
                     vendor: entry.vendor.clone(),
                     categories: entry.categories.clone(),

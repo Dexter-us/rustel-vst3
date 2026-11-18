@@ -1,3 +1,4 @@
+use crate::vst_catalog::{VstCatalog, VstSort};
 use crate::{compiler, compiler::PreparedPlan, params::RustelParams};
 use crossbeam_queue::ArrayQueue;
 use nih_plug::prelude::*;
@@ -47,9 +48,23 @@ pub struct HostTransport {
     pub position_beats: Option<f64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct VstPluginEntry {
+    pub key: String,
+    pub name: String,
+    pub vendor: String,
+    pub categories: String,
+    pub instrument: bool,
+    pub display_label: String,
+    pub midi_source: bool,
+    pub order: u64,
+}
+
 pub struct Shared {
     pub status: Mutex<String>,
-    pub vst_plugins: Mutex<String>,
+    pub vst_plugins: Mutex<Vec<VstPluginEntry>>,
+    pub vst_plugins_message: Mutex<String>,
+    pub vst_sort: Mutex<VstSort>,
     pub peak: AtomicF32,
     pub bpm: AtomicU64,
     pub beat: AtomicU64,
@@ -66,7 +81,9 @@ impl Shared {
     fn new() -> Self {
         Self {
             status: Mutex::new("Waiting for the DAW to initialize audio.".into()),
-            vst_plugins: Mutex::new("VST3 plugins have not been scanned yet.".into()),
+            vst_plugins: Mutex::new(Vec::new()),
+            vst_plugins_message: Mutex::new("VST3 plugins have not been scanned yet.".into()),
+            vst_sort: Mutex::new(VstSort::Name),
             peak: AtomicF32::new(0.0),
             bpm: AtomicU64::new(120.0_f64.to_bits()),
             beat: AtomicU64::new(0.0_f64.to_bits()),
@@ -835,27 +852,47 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
             let folders = params.vst3_folders.lock().clone();
             match crate::portable_vst::configure(&folders, &shared.shutdown) {
                 Ok(()) => {
+                    let (catalog, catalog_warning) = match VstCatalog::load() {
+                        Ok(catalog) => (catalog, None),
+                        Err(error) => (VstCatalog::default(), Some(error)),
+                    };
                     let plugins = rustel_runtime::vst::host()
                         .plugins()
                         .into_iter()
-                        .map(|plugin| {
-                            let kind = if plugin.instrument {
-                                "instrument"
+                        .enumerate()
+                        .map(|(index, plugin)| {
+                            let key = if plugin.class_id.is_empty() {
+                                format!("{}\t{}\t{}", plugin.vendor, plugin.name, plugin.categories)
                             } else {
-                                "effect"
+                                plugin.class_id
                             };
-                            format!("{} — {kind}", plugin.name)
+                            let preference = catalog.preference(&key, index as u64 * 1024);
+                            VstPluginEntry {
+                                key,
+                                name: plugin.name,
+                                vendor: plugin.vendor,
+                                categories: plugin.categories,
+                                instrument: plugin.instrument,
+                                display_label: preference.label,
+                                midi_source: preference.midi_source,
+                                order: preference.order,
+                            }
                         })
                         .collect::<Vec<_>>();
-                    *shared.vst_plugins.lock() = if plugins.is_empty() {
-                        "No VST3 plugins found in the standard or selected folders.".into()
-                    } else {
-                        plugins.join("\n")
-                    };
+                    *shared.vst_sort.lock() = catalog.sort;
+                    *shared.vst_plugins_message.lock() = catalog_warning.unwrap_or_else(|| {
+                        if plugins.is_empty() {
+                            "No VST3 plugins found in the standard or selected folders.".into()
+                        } else {
+                            String::new()
+                        }
+                    });
+                    *shared.vst_plugins.lock() = plugins;
                     *shared.status.lock() = "VST3 plugin scan finished.".into();
                 }
                 Err(error) => {
-                    *shared.vst_plugins.lock() = error.clone();
+                    shared.vst_plugins.lock().clear();
+                    *shared.vst_plugins_message.lock() = error.clone();
                     *shared.status.lock() = error;
                 }
             }

@@ -2772,7 +2772,7 @@ dependencies = [
 
 [[package]]
 name = "rustel-vst3"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "crossbeam-queue",
  "nih_plug",

@@ -6,6 +6,7 @@ mod params;
 mod portable_csound;
 mod portable_vst;
 mod score_files;
+mod vst_catalog;
 
 use nih_plug::prelude::*;
 use std::sync::Arc;
