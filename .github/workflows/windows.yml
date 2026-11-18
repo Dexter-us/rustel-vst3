@@ -34,16 +34,16 @@ jobs:
       - name: Run focused checks
         run: cargo test --workspace --locked -- --test-threads=1
       - name: Build the uniquely selected plugin library
-        run: cargo build --package rustel-vst3@0.1.10 --release --locked
+        run: cargo build --package rustel-vst3@0.1.11 --release --locked
       - name: Prepare the NIH bundler library path
         shell: pwsh
         run: |
           Copy-Item target/release/rustel_vst3.dll `
-            'target/release/rustel_vst3@0.1.10.dll' -Force
+            'target/release/rustel_vst3@0.1.11.dll' -Force
       - name: Build the Windows x64 VST3 bundle
-        run: cargo xtask bundle rustel-vst3@0.1.10 --release --locked
+        run: cargo xtask bundle rustel-vst3@0.1.11 --release --locked
       - name: Build the VST3 scan helper
-        run: cargo build --package rustel-vst3@0.1.10 --bin rustel-vst-worker --release --locked
+        run: cargo build --package rustel-vst3@0.1.11 --bin rustel-vst-worker --release --locked
       - name: Verify the scan helper does not open a console
         shell: pwsh
         run: |
@@ -105,6 +105,31 @@ jobs:
             -Uri "https://raw.githubusercontent.com/csound/csound/6.18.1/COPYING" `
             -OutFile $copying
           "CSOUND_COPYING=$copying" >> $env:GITHUB_ENV
+      - name: Validate FM examples with Csound 6.18.1
+        shell: pwsh
+        run: |
+          $csound = Join-Path $env:CSOUND_RUNTIME "csound.exe"
+          if (!(Test-Path $csound)) {
+            throw "The Csound 6.18.1 command-line syntax checker is missing."
+          }
+          $env:OPCODE6DIR64 = $env:CSOUND_RUNTIME
+          $examples = @(
+            @{ Instrument = "fm_electric_piano"; Orchestra = "Scores/fm-electric-piano.orc" },
+            @{ Instrument = "fm_bass"; Orchestra = "Scores/fm-bass.orc" },
+            @{ Instrument = "fm_bell"; Orchestra = "Scores/fm-bell.orc" }
+          )
+          foreach ($example in $examples) {
+            if (!(Test-Path $example.Orchestra)) {
+              throw "Missing Csound orchestra: $($example.Orchestra)"
+            }
+            $score = Join-Path $env:RUNNER_TEMP "$($example.Instrument).sco"
+            $scoreText = "i `"$($example.Instrument)`" 0 0.25 60 100`ne`n"
+            [IO.File]::WriteAllText($score, $scoreText, [Text.Encoding]::ASCII)
+            & $csound -n -d -m0 --syntax-check-only $example.Orchestra $score
+            if ($LASTEXITCODE -ne 0) {
+              throw "Csound 6.18.1 rejected $($example.Orchestra)."
+            }
+          }
       - name: Assemble download
         shell: pwsh
         run: |
@@ -117,6 +142,7 @@ jobs:
           Copy-Item scripts/install-windows.ps1 package/
           Copy-Item rustel-cli-source/LICENSE package/licenses/RUSTEL-CLI-LICENSE
           Copy-Item rustel-cli-source/NOTICE.md package/licenses/RUSTEL-CLI-NOTICE.md
+          Copy-Item -Recurse Scores package/
           New-Item -ItemType Directory -Force package/CsoundRuntime | Out-Null
           Get-ChildItem $env:CSOUND_RUNTIME -Filter *.dll |
             Copy-Item -Destination package/CsoundRuntime
@@ -160,6 +186,12 @@ jobs:
             "Rustel.vst3/Contents/x86_64-win/Rustel.vst3",
             "rustel.exe",
             "RustelVstWorker.exe",
+            "Scores/fm-electric-piano.orc",
+            "Scores/fm-electric-piano.strudel",
+            "Scores/fm-bass.orc",
+            "Scores/fm-bass.strudel",
+            "Scores/fm-bell.orc",
+            "Scores/fm-bell.strudel",
             "CsoundRuntime/csound64.dll",
             "licenses/CSOUND-COPYING",
             "README-PORTABLE.txt",

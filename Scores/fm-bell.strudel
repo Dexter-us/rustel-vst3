@@ -1,0 +1,2 @@
+await loadOrc("local:fm-bell.orc");
+note("c5 ~ e5 ~ g5 ~ b5 ~").csoundm("fm_bell").gain(0.50)

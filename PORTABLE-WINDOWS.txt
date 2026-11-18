@@ -9,6 +9,13 @@ Load and Save use an in-plugin browser for a Scores subfolder beside the plugin
 bundle. Rustel creates that folder when needed, so saved scores move with the
 portable files.
 
+The portable ZIP includes three Csound FM instruments and matching Rustel scores
+in Scores/: FM Electric Piano, FM Bass, and FM Bell. In Rustel, enable
+"Allow native Csound", set "Trusted .orc folder" to the full path of Scores,
+then use Load… to open the matching .strudel score and press Evaluate. The
+editor's Examples list also has one-click score snippets. Csound is disabled by
+default; only load orchestra files you trust.
+
 In VSTHost, add the extracted folder to the VST3 plugin scan paths and rescan.
 If you prefer the standard VST3 folder, copy Rustel.vst3, RustelVstWorker.exe,
 and CsoundRuntime there as sibling entries. Do not copy only the inner

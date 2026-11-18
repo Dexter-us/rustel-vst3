@@ -1,0 +1,2 @@
+await loadOrc("local:fm-bass.orc");
+note("c2 ~ c2 g1 ~ g1 bb1 c2").csoundm("fm_bass").gain(0.65).slow(2)

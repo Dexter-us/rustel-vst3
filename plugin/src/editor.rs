@@ -267,6 +267,18 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                             "Csound triangle",
                             r#"note("c3 eb3 g3 bb3").csound("triangle").gain(0.4).slow(2)"#,
                         ),
+                        (
+                            "FM Electric Piano",
+                            "await loadOrc(\"local:fm-electric-piano.orc\");\nnote(\"c4 eb4 g4 c5\").csoundm(\"fm_electric_piano\").gain(0.55)",
+                        ),
+                        (
+                            "FM Bass",
+                            "await loadOrc(\"local:fm-bass.orc\");\nnote(\"c2 ~ c2 g1 ~ g1 bb1 c2\").csoundm(\"fm_bass\").gain(0.65).slow(2)",
+                        ),
+                        (
+                            "FM Bell",
+                            "await loadOrc(\"local:fm-bell.orc\");\nnote(\"c5 ~ e5 ~ g5 ~ b5 ~\").csoundm(\"fm_bell\").gain(0.50)",
+                        ),
                     ] {
                         if ui.button(name).clicked() {
                             *params.draft.lock() = source.into();

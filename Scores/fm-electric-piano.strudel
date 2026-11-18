@@ -1,0 +1,2 @@
+await loadOrc("local:fm-electric-piano.orc");
+note("c4 eb4 g4 c5").csoundm("fm_electric_piano").gain(0.55)

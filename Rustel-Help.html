@@ -192,7 +192,7 @@
     <div class="badges" aria-label="Product details">
       <span class="badge">Windows x64</span>
       <span class="badge">VST3 instrument</span>
-      <span class="badge">Version 0.1.10</span>
+      <span class="badge">Version 0.1.11</span>
       <span class="badge">Manufacturer: Dexter U.S.</span>
       <span class="badge">Csound 6.18.1 bundled</span>
     </div>
@@ -365,6 +365,22 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
   .gain(0.4)
   .slow(2)</code></pre>
         <p>Use <code>.csound("name")</code> when the orchestra expects frequency in <code>p4</code>; use <code>.csoundm("name")</code> when it expects a fractional MIDI note number and velocity-style level.</p>
+        <h3>Three ready-to-load FM instruments</h3>
+        <p>The portable package's <code>Scores</code> folder contains an orchestra and matching Rustel score for each instrument:</p>
+        <ul>
+          <li><strong>FM Electric Piano</strong> — <code>fm-electric-piano.orc</code>, instrument <code>fm_electric_piano</code>, score <code>fm-electric-piano.strudel</code>.</li>
+          <li><strong>FM Bass</strong> — <code>fm-bass.orc</code>, instrument <code>fm_bass</code>, score <code>fm-bass.strudel</code>.</li>
+          <li><strong>FM Bell</strong> — <code>fm-bell.orc</code>, instrument <code>fm_bell</code>, score <code>fm-bell.strudel</code>.</li>
+        </ul>
+        <ol>
+          <li>Turn on <strong>Allow native Csound</strong>.</li>
+          <li>Set <strong>Trusted .orc folder</strong> to the full path of the portable package's <code>Scores</code> folder.</li>
+          <li>Use <strong>Load…</strong> to open the matching <code>.strudel</code> score, or choose its FM example in the editor's Examples list.</li>
+          <li>Press <strong>Evaluate</strong>, then start or resume playback.</li>
+        </ol>
+        <p>Each score loads its matching orchestra with <code>await loadOrc("local:filename.orc")</code> and calls it with <code>.csoundm("instrument_name")</code>. Rustel sends MIDI pitch in <code>p4</code>, velocity-scaled level in <code>p5</code>, and note duration as the Csound event duration.</p>
+        <pre><code>await loadOrc("local:fm-electric-piano.orc");
+note("c4 eb4 g4 c5").csoundm("fm_electric_piano").gain(0.55)</code></pre>
         <h3>Load a trusted orchestra file</h3>
         <p>Enter the full path to a trusted folder in <strong>Trusted .orc folder</strong>, then load a file from that folder in the score:</p>
         <pre><code>await loadOrc("local:voice.orc")</code></pre>

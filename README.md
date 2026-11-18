@@ -24,7 +24,7 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 - Keep the last accepted phrase when an edit fails.
 - Turn off **Follow DAW** for a free-running preview, if the DAW continues processing audio while stopped.
 - Opt in to **Allow native Csound** to use Rustel's `.csound()`, `.csoundm()`, inline `loadCSound`, and trusted `.orc` files.
-- Choose the **Csound triangle** example in the editor's Examples list to insert a ready-to-evaluate Csound score.
+- Choose the **Csound triangle** example or one of the three bundled FM examples in the editor's Examples list.
 
 ## Important: repeating phrases, not an unbounded interpreter
 
@@ -68,9 +68,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.10 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.10.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.10 --release --locked
+cargo build --package rustel-vst3@0.1.11 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.11.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.11 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -115,7 +115,7 @@ Add an effect by chaining `.vst("Effect Name")` after the sound or instrument. E
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
 
-The editor header shows the plugin version, such as **v0.1.10**. Use that label to distinguish this build from older downloads.
+The editor header shows the plugin version, such as **v0.1.11**. Use that label to distinguish this build from older downloads.
 
 ## Visual patch editor
 
@@ -168,6 +168,8 @@ In **Open plugin list → MIDI source**, choose **Rustel sample**, **Rustel wave
 The Windows downloads include the official double-precision Csound 6.18.1 runtime and standard opcode DLLs; you do not need a separate Csound installation. In the portable ZIP, keep `CsoundRuntime` beside `Rustel.vst3`; the plugin automatically points the current DAW process at the bundled copy. Scan cache and presets for hosted plugins are kept in `RustelData` beside the package, unless `RUSTEL_CONFIG_DIR` is already set. The package does not change persistent Windows settings. The Microsoft Visual C++ 2015–2022 x64 runtime may also be needed; the installer checks for it and prints Microsoft's download link if it is missing. Rustel currently supports Csound 6.18 or later within the 6.x series, so this bundle does not use Csound 7.
 
 Csound is **off by default**. Enable **Allow native Csound** only for scores you trust: an orchestra can use native opcodes to access files and run processes with the DAW's permissions. For local `.orc` files, enter the full path to a trusted folder in **Trusted .orc folder**, then use Rustel's `await loadOrc("local:voice.orc")` in the score. The file loader confines text reads to that folder; it cannot restrict what the compiled orchestra does. Inline `loadCSound` definitions need no folder.
+
+The portable package includes three FM instruments and matching `.strudel` scores in `Scores`: **FM Electric Piano** (`fm_electric_piano`), **FM Bass** (`fm_bass`), and **FM Bell** (`fm_bell`). Turn on **Allow native Csound**, set **Trusted .orc folder** to the package's full `Scores` path, then load a matching `.strudel` file from the plugin's **Load…** button and press **Evaluate**. The editor's Examples list also has one-click score snippets. Each orchestra uses Rustel's `.csoundm()` fields: `p4` is fractional MIDI pitch and `p5` is velocity-scaled level.
 
 Example Csound score after enabling permission:
 
