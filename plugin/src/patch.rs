@@ -887,6 +887,13 @@ mod tests {
     #[test]
     fn selected_csound_orc_is_loaded_before_generated_notes() {
         let mut graph = PatchGraph::default();
+        let orc_path = std::env::temp_dir()
+            .join("trusted")
+            .join("orchestra")
+            .join("fm.orc")
+            .to_string_lossy()
+            .into_owned();
+        let escaped_orc_path = orc_path.replace('\\', "\\\\").replace('"', "\\\"");
         let instrument = graph
             .nodes
             .iter_mut()
@@ -895,11 +902,11 @@ mod tests {
         instrument.kind = PatchNodeKind::Instrument {
             instrument: InstrumentKind::Csound,
             value: "fm_voice".into(),
-            orc_file: Some("/trusted/orchestra/fm.orc".into()),
+            orc_file: Some(orc_path),
         };
 
         let code = graph.generate_code().expect("Csound patch generates");
-        assert!(code.starts_with("await loadOrc(\"local:/trusted/orchestra/fm.orc\");"));
+        assert!(code.starts_with(&format!("await loadOrc(\"local:{escaped_orc_path}\");")));
         assert!(code.contains(".csoundm(\"fm_voice\")"));
     }
 
