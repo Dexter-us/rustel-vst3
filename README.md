@@ -68,9 +68,9 @@ From the repository root:
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked -- --test-threads=1
-cargo build --package rustel-vst3@0.1.11 --release --locked
-Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.11.dll' -Force
-cargo xtask bundle rustel-vst3@0.1.11 --release --locked
+cargo build --package rustel-vst3@0.1.12 --release --locked
+Copy-Item target/release/rustel_vst3.dll 'target/release/rustel_vst3@0.1.12.dll' -Force
+cargo xtask bundle rustel-vst3@0.1.12 --release --locked
 git clone https://github.com/tzfm/rustel.git rustel-cli-source
 git -C rustel-cli-source checkout $(Get-Content rustel-cli-revision.txt)
 git -C rustel-cli-source apply ..\scripts\windows-cli-pulseaudio.patch
@@ -115,13 +115,13 @@ Add an effect by chaining `.vst("Effect Name")` after the sound or instrument. E
 
 `vsti()` sends each score note's pitch, velocity, and duration to a VST3 instrument. `vst()` processes the resulting sound through a VST3 audio effect. VST2 plugins are not supported. Hosted plugin phrases are rendered off the audio callback and then repeat with the selected phrase length; plugin changes take effect after **Evaluate** finishes. The scan runs in the bundled helper process, but actual plugin rendering happens inside the DAW process. Only use plugins you trust; a faulty plugin can still crash or hang the DAW during rendering.
 
-The editor header shows the plugin version, such as **v0.1.11**. Use that label to distinguish this build from older downloads.
+The editor header shows the plugin version, such as **v0.1.12**. Use that label to distinguish this build from older downloads.
 
 ## Visual patch editor
 
-Click **Patch** beside **Score** to open the native node canvas. Add a note pattern, a MIDI-outputting VST3, an instrument, a pattern/audio expression, a VST3 effect, and an audio output. Instrument choices include Rustel synths, samples, wavetables, KabelSalat graphs, Csound, and VST3 instruments. Edit the block fields to choose a scanned plugin or enter a Rustel sound/instrument name.
+Click **Patch** beside **Score** to open the native node canvas. Use the toolbar or right-click the canvas to add a note pattern, a MIDI-outputting VST3, an instrument, a pattern/audio expression, a VST3 effect, and an audio output. Instrument choices include Rustel synths, samples, wavetables, KabelSalat graphs, Csound, and VST3 instruments. The Patch screen shows scan counts and has shortcuts to the plugin list and rescan. Empty instrument, effect, or MIDI lists explain which scan/tag setting to check.
 
-Click an output port, then a compatible input port to connect the blocks. Amber cables carry MIDI; teal cables carry audio. Drag a block title to move it, drag empty canvas to pan, remove a node with its **×** button, and remove cables from **Connections**. The default patch is a note pattern through a Rustel synth to the audio output.
+Click an output port, then a compatible input port to connect the blocks. Amber cables carry MIDI; teal cables carry audio. Drag a block title to move it, drag empty canvas to pan, remove a node with its **×** button, remove cables from **Connections**, or choose **Clear all blocks…** to reset the canvas. A Csound instrument block can browse for an `.orc` file; choosing it adds an `await loadOrc(...)` call when you generate code. The selected file’s folder becomes the trusted ORC folder when needed. Enter the instrument name declared in that ORC, enable **Allow native Csound**, generate code, review it, then press **Evaluate**. The default patch is a note pattern through a Rustel synth to the audio output.
 
 **Generate Code** checks the patch and replaces the current score draft with ordinary Rustel code. Review that code in **Score** and press **Evaluate** to run it. The patch graph is stored in the DAW project state. This is one-way generation: handwritten score code is not converted back into blocks.
 

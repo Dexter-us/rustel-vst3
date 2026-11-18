@@ -1,7 +1,9 @@
 use crate::{
     engine::{Shared, VstPluginEntry},
     params::RustelParams,
-    patch::{ExpressionSignal, InstrumentKind, PatchGraph, PatchNodeKind, PortKind},
+    patch::{
+        ExpressionSignal, InstrumentKind, MAX_PATCH_NODES, PatchGraph, PatchNodeKind, PortKind,
+    },
 };
 use copypasta::{ClipboardContext, ClipboardProvider};
 use nih_plug::prelude::*;
@@ -35,6 +37,8 @@ struct ScoreFileUi {
     patch_wire_from: Option<u64>,
     patch_pan: egui::Vec2,
     patch_message: String,
+    patch_add_position: Option<[f32; 2]>,
+    clear_patch_confirm: bool,
     add_instrument_kind: InstrumentKind,
 }
 
@@ -48,10 +52,19 @@ struct VstCodeTarget {
 }
 
 struct FolderPicker {
+    purpose: FolderPickerPurpose,
     directory: Option<std::path::PathBuf>,
     directories: Vec<std::path::PathBuf>,
     selected: Option<std::path::PathBuf>,
+    orc_files: Vec<std::path::PathBuf>,
+    selected_orc: Option<std::path::PathBuf>,
     error: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum FolderPickerPurpose {
+    Vst3,
+    CsoundOrc { target_node_id: u64 },
 }
 
 struct CsoundSourceUi {
@@ -303,7 +316,7 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                 });
                 ui.separator();
                 if file_ui.patch_screen {
-                    if draw_patch_editor(ui, file_ui, &shared) {
+                    if draw_patch_editor(ui, file_ui, &shared, &params) {
                         match file_ui.patch_graph.to_json() {
                             Ok(saved) => {
                                 *params.patch_graph.lock() = saved;
@@ -599,6 +612,69 @@ fn insert_code_at_char_range(
 
 const PATCH_NODE_WIDTH: f32 = 220.0;
 const PATCH_NODE_HEIGHT: f32 = 172.0;
+const PATCH_NODE_COLUMN_STEP: f32 = 240.0;
+const PATCH_NODE_ROW_STEP: f32 = 240.0;
+const PATCH_NODE_COLLISION_HEIGHT: f32 = PATCH_NODE_HEIGHT + 48.0;
+
+#[derive(Clone, Copy)]
+enum PluginPickerFilter {
+    Instrument,
+    Effect,
+    MidiSource,
+}
+
+impl PluginPickerFilter {
+    fn matches(self, plugin: &VstPluginEntry) -> bool {
+        match self {
+            Self::Instrument => plugin.instrument,
+            Self::Effect => !plugin.instrument,
+            Self::MidiSource => plugin.midi_source,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Instrument => "instrument",
+            Self::Effect => "effect",
+            Self::MidiSource => "MIDI source",
+        }
+    }
+
+    fn empty_message(self) -> &'static str {
+        match self {
+            Self::Instrument => "No scanned VST3 instruments are available.",
+            Self::Effect => "No scanned VST3 effects are available.",
+            Self::MidiSource => {
+                "No plugins are tagged for MIDI output. In Plugin List, open a plugin row and enable “MIDI output usable”."
+            }
+        }
+    }
+}
+
+fn next_open_patch_position(graph: &PatchGraph) -> [f32; 2] {
+    for slot in 0..=MAX_PATCH_NODES {
+        let column = slot % 3;
+        let row = slot / 3;
+        let candidate = [
+            14.0 + column as f32 * PATCH_NODE_COLUMN_STEP,
+            24.0 + row as f32 * PATCH_NODE_ROW_STEP,
+        ];
+        let overlaps = graph.nodes.iter().any(|node| {
+            candidate[0] < node.position[0] + PATCH_NODE_WIDTH + 12.0
+                && candidate[0] + PATCH_NODE_WIDTH + 12.0 > node.position[0]
+                && candidate[1] < node.position[1] + PATCH_NODE_COLLISION_HEIGHT
+                && candidate[1] + PATCH_NODE_COLLISION_HEIGHT > node.position[1]
+        });
+        if !overlaps {
+            return candidate;
+        }
+    }
+    [14.0, 24.0]
+}
+
+fn plugin_picker_matches(plugin: &VstPluginEntry, filter: PluginPickerFilter) -> bool {
+    filter.matches(plugin)
+}
 
 #[derive(Default)]
 struct PatchNodeActions {
@@ -610,9 +686,19 @@ struct PatchNodeActions {
     output_port: Option<egui::Pos2>,
 }
 
-fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shared) -> bool {
+fn draw_patch_editor(
+    ui: &mut egui::Ui,
+    file_ui: &mut ScoreFileUi,
+    shared: &Shared,
+    params: &RustelParams,
+) -> bool {
     let mut changed = false;
     let mut new_node = None;
+    let mut new_node_position = None;
+    let plugins = shared.vst_plugins.lock().clone();
+    let instrument_count = plugins.iter().filter(|plugin| plugin.instrument).count();
+    let effect_count = plugins.iter().filter(|plugin| !plugin.instrument).count();
+    let midi_source_count = plugins.iter().filter(|plugin| plugin.midi_source).count();
     ui.horizontal_wrapped(|ui| {
         if ui.button("＋ Notes").clicked() {
             new_node = Some(PatchNodeKind::NotePattern {
@@ -644,6 +730,7 @@ fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shar
             new_node = Some(PatchNodeKind::Instrument {
                 instrument: kind,
                 value: default_instrument_value(kind, shared),
+                orc_file: None,
             });
         }
         if ui.button("＋ Pattern op").clicked() {
@@ -675,6 +762,9 @@ fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shar
         {
             new_node = Some(PatchNodeKind::Output);
         }
+        if ui.button("Clear all blocks…").clicked() {
+            file_ui.clear_patch_confirm = true;
+        }
         ui.separator();
         if ui
             .button(RichText::new("Generate Code").strong())
@@ -697,24 +787,64 @@ fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shar
         }
     });
 
-    if let Some(kind) = new_node {
-        let index = file_ui.patch_graph.nodes.len();
-        let column = index % 3;
-        let row = index / 3;
-        match file_ui.patch_graph.add_node(
-            kind,
-            [14.0 + column as f32 * 226.0, 24.0 + row as f32 * 200.0],
-        ) {
-            Ok(_) => {
-                file_ui.patch_message.clear();
-                changed = true;
-            }
-            Err(error) => file_ui.patch_message = error,
+    ui.horizontal_wrapped(|ui| {
+        ui.small(format!(
+            "Scanned VST3s: {} · Instruments: {instrument_count} · Effects: {effect_count} · MIDI-tagged: {midi_source_count}",
+            plugins.len()
+        ));
+        if ui.button("Plugin list…").clicked() {
+            file_ui.plugin_directory_open = true;
         }
+        if ui.button("Rescan VST3").clicked() {
+            shared.scan_vst_plugins.store(true, Ordering::Release);
+            *shared.vst_plugins_message.lock() = "VST3 rescan requested…".into();
+        }
+    });
+    let scan_message = shared.vst_plugins_message.lock().clone();
+    if !scan_message.is_empty() {
+        ui.small(scan_message);
+    }
+    if midi_source_count == 0 {
+        ui.small(
+            "The MIDI source list uses manual tags. In Plugin list, expand a plugin and enable “MIDI output usable”.",
+        );
+    }
+
+    let mut clear_requested = false;
+    if file_ui.clear_patch_confirm {
+        let mut confirm_open = true;
+        let mut cancel_clear = false;
+        egui::Window::new("Clear patch canvas?")
+            .id(egui::Id::new("rustel-patch-clear-confirm"))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut confirm_open)
+            .show(ui.ctx(), |ui| {
+                ui.label("This removes every block and cable from the Patch canvas.");
+                ui.small("Your Score text is not changed.");
+                ui.horizontal(|ui| {
+                    if ui.button("Clear all blocks").clicked() {
+                        clear_requested = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clear = true;
+                    }
+                });
+            });
+        file_ui.clear_patch_confirm = confirm_open && !clear_requested && !cancel_clear;
+    }
+    if clear_requested {
+        file_ui.patch_graph.clear();
+        file_ui.patch_wire_from = None;
+        file_ui.patch_add_position = None;
+        file_ui.patch_message =
+            "Canvas cleared. Right-click the background or use the buttons above to add blocks."
+                .into();
+        changed = true;
     }
 
     ui.horizontal_wrapped(|ui| {
-        ui.small("Click a node’s output, then a compatible input to make a cable. Drag a block’s title to move it; drag empty canvas to pan.");
+        ui.small("Right-click the canvas to add a block. Click an output, then a compatible input to connect; drag a block title to move it.");
         ui.label(RichText::new("MIDI").color(port_color(PortKind::Midi)));
         ui.label(RichText::new("Audio").color(port_color(PortKind::Audio)));
         if file_ui.patch_wire_from.is_some() && ui.small_button("Cancel cable").clicked() {
@@ -769,8 +899,114 @@ fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shar
     if canvas_response.dragged() {
         file_ui.patch_pan += canvas_response.drag_delta();
     }
+    if canvas_response.secondary_clicked() {
+        if let Some(pointer) = canvas_response.interact_pointer_pos() {
+            file_ui.patch_add_position = Some([
+                pointer.x - canvas_rect.left() - file_ui.patch_pan.x,
+                pointer.y - canvas_rect.top() - file_ui.patch_pan.y,
+            ]);
+        }
+    }
+    let has_output = file_ui
+        .patch_graph
+        .nodes
+        .iter()
+        .any(|node| matches!(node.kind, PatchNodeKind::Output));
+    canvas_response.context_menu(|ui| {
+        ui.label("Add a block at this position");
+        if ui.button("MIDI pattern").clicked() {
+            new_node = Some(PatchNodeKind::NotePattern {
+                expression: "note(\"c3 e3 g3\")".into(),
+            });
+            new_node_position = file_ui.patch_add_position.take();
+            ui.close_menu();
+        }
+        if ui.button("MIDI VST3 source").clicked() {
+            new_node = Some(PatchNodeKind::MidiVst {
+                plugin: first_plugin_name(shared, |plugin| plugin.midi_source).unwrap_or_default(),
+                is_effect: true,
+            });
+            new_node_position = file_ui.patch_add_position.take();
+            ui.close_menu();
+        }
+        ui.menu_button("Instrument", |ui| {
+            for kind in [
+                InstrumentKind::RustelSynth,
+                InstrumentKind::Sample,
+                InstrumentKind::Wavetable,
+                InstrumentKind::Graph,
+                InstrumentKind::Csound,
+                InstrumentKind::Vsti,
+            ] {
+                if ui.button(kind.label()).clicked() {
+                    file_ui.add_instrument_kind = kind;
+                    new_node = Some(PatchNodeKind::Instrument {
+                        instrument: kind,
+                        value: default_instrument_value(kind, shared),
+                        orc_file: None,
+                    });
+                    new_node_position = file_ui.patch_add_position.take();
+                    ui.close_menu();
+                }
+            }
+        });
+        if ui.button("Pattern modifier").clicked() {
+            new_node = Some(PatchNodeKind::Expression {
+                signal: ExpressionSignal::Midi,
+                suffix: ".slow(2)".into(),
+            });
+            new_node_position = file_ui.patch_add_position.take();
+            ui.close_menu();
+        }
+        if ui.button("Audio modifier").clicked() {
+            new_node = Some(PatchNodeKind::Expression {
+                signal: ExpressionSignal::Audio,
+                suffix: ".gain(0.5)".into(),
+            });
+            new_node_position = file_ui.patch_add_position.take();
+            ui.close_menu();
+        }
+        if ui.button("VST3 effect").clicked() {
+            new_node = Some(PatchNodeKind::VstEffect {
+                plugin: first_plugin_name(shared, |plugin| !plugin.instrument).unwrap_or_default(),
+                parameters: String::new(),
+            });
+            new_node_position = file_ui.patch_add_position.take();
+            ui.close_menu();
+        }
+        if ui
+            .add_enabled(!has_output, egui::Button::new("Audio output"))
+            .clicked()
+        {
+            new_node = Some(PatchNodeKind::Output);
+            new_node_position = file_ui.patch_add_position.take();
+            ui.close_menu();
+        }
+    });
+    if let Some(kind) = new_node.take() {
+        let position = new_node_position
+            .take()
+            .unwrap_or_else(|| next_open_patch_position(&file_ui.patch_graph));
+        match file_ui.patch_graph.add_node(kind, position) {
+            Ok(_) => {
+                file_ui.patch_add_position = None;
+                file_ui.patch_message.clear();
+                changed = true;
+            }
+            Err(error) => file_ui.patch_message = error,
+        }
+    }
     let painter = ui.painter_at(canvas_rect);
     painter.rect_filled(canvas_rect, 4.0, Color32::from_rgb(24, 27, 34));
+    if file_ui.patch_graph.nodes.is_empty() {
+        painter.text(
+            canvas_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Empty Patch canvas\nRight-click here or use the buttons above to add blocks.",
+            egui::FontId::proportional(16.0),
+            Color32::from_gray(174),
+        );
+    }
 
     let mut removed_node = None;
     let mut new_connection = None;
@@ -816,7 +1052,14 @@ fn draw_patch_editor(ui: &mut egui::Ui, file_ui: &mut ScoreFileUi, shared: &Shar
                             }
                         });
                         ui.separator();
-                        actions.changed |= draw_patch_node_fields(ui, &mut node.kind, id, shared);
+                        actions.changed |= draw_patch_node_fields(
+                            ui,
+                            &mut node.kind,
+                            id,
+                            shared,
+                            &mut file_ui.folder_picker,
+                            params,
+                        );
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if let Some(input) = node.kind.input_kind() {
@@ -946,6 +1189,8 @@ fn draw_patch_node_fields(
     kind: &mut PatchNodeKind,
     id: u64,
     shared: &Shared,
+    folder_picker: &mut Option<FolderPicker>,
+    params: &RustelParams,
 ) -> bool {
     let mut changed = false;
     match kind {
@@ -965,9 +1210,13 @@ fn draw_patch_node_fields(
                 changed |= ui.checkbox(is_effect, "MIDI effect").changed();
             });
             ui.small("Choose a scanned plugin that outputs MIDI.");
-            changed |= draw_plugin_picker(ui, plugin, id, shared, None);
+            changed |= draw_plugin_picker(ui, plugin, id, shared, PluginPickerFilter::MidiSource);
         }
-        PatchNodeKind::Instrument { instrument, value } => {
+        PatchNodeKind::Instrument {
+            instrument,
+            value,
+            orc_file,
+        } => {
             let previous = *instrument;
             egui::ComboBox::from_id_salt(("rustel-patch-instrument", id))
                 .selected_text(instrument.label())
@@ -985,12 +1234,14 @@ fn draw_patch_node_fields(
                 });
             if previous != *instrument {
                 *value = default_instrument_value(*instrument, shared);
+                *orc_file = None;
                 changed = true;
             }
             match instrument {
                 InstrumentKind::Vsti => {
                     ui.small("Choose a scanned VST3 instrument or enter its name.");
-                    changed |= draw_plugin_picker(ui, value, id, shared, Some(true));
+                    changed |=
+                        draw_plugin_picker(ui, value, id, shared, PluginPickerFilter::Instrument);
                 }
                 InstrumentKind::Graph => {
                     ui.small("KabelSalat expression");
@@ -1003,11 +1254,37 @@ fn draw_patch_node_fields(
                         .changed();
                 }
                 InstrumentKind::Csound => {
-                    ui.small("Orchestra instrument name · enable Csound in Transport.");
+                    ui.small("Pick an ORC from disk, then enter its instrument name.");
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Load ORC from disk…").clicked() {
+                            start_orc_picker(folder_picker, id, params);
+                        }
+                        if let Some(path) = orc_file.as_deref() {
+                            let filename = std::path::Path::new(path)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            ui.small(format!("ORC: {filename}"));
+                            if ui.small_button("Clear ORC").clicked() {
+                                *orc_file = None;
+                                changed = true;
+                            }
+                        } else {
+                            ui.small("No ORC file selected");
+                        }
+                    });
+                    if let Some(path) = orc_file.as_deref() {
+                        if !std::path::Path::new(path).is_file() {
+                            ui.colored_label(Color32::YELLOW, "The selected ORC file is missing.");
+                        }
+                    }
+                    ui.small(
+                        "Csound must be enabled in Transport. Only load orchestra files you trust.",
+                    );
                     changed |= ui
                         .add(
                             TextEdit::singleline(value)
-                                .hint_text("triangle")
+                                .hint_text("Csound instrument name")
                                 .desired_width(PATCH_NODE_WIDTH - 32.0),
                         )
                         .changed();
@@ -1049,7 +1326,7 @@ fn draw_patch_node_fields(
         }
         PatchNodeKind::VstEffect { plugin, parameters } => {
             ui.small("Scanned effect name");
-            changed |= draw_plugin_picker(ui, plugin, id, shared, Some(false));
+            changed |= draw_plugin_picker(ui, plugin, id, shared, PluginPickerFilter::Effect);
             ui.small("Optional Rustel parameter object");
             changed |= ui
                 .add(
@@ -1071,30 +1348,37 @@ fn draw_plugin_picker(
     selected: &mut String,
     id: u64,
     shared: &Shared,
-    instrument_filter: Option<bool>,
+    filter: PluginPickerFilter,
 ) -> bool {
     let plugins = shared.vst_plugins.lock().clone();
+    let available_count = plugins
+        .iter()
+        .filter(|plugin| plugin_picker_matches(plugin, filter))
+        .count();
     let selected_label = plugins
         .iter()
-        .find(|plugin| plugin.name == *selected)
-        .map(|plugin| plugin.display_label.as_str())
+        .find(|plugin| plugin.name == *selected && plugin_picker_matches(plugin, filter))
+        .map(|plugin| plugin_display_label(plugin).to_owned())
         .unwrap_or(if selected.is_empty() {
-            "Choose a scanned plugin…"
+            if available_count == 0 {
+                format!("No scanned {} ({available_count})", filter.label())
+            } else {
+                format!("Choose {} ({available_count})", filter.label())
+            }
         } else {
-            selected
+            selected.clone()
         });
     let mut changed = false;
     egui::ComboBox::from_id_salt(("rustel-patch-plugin", id))
         .selected_text(selected_label)
         .width(PATCH_NODE_WIDTH - 34.0)
         .show_ui(ui, |ui| {
+            if available_count == 0 {
+                ui.small(filter.empty_message());
+                ui.small("Open Plugin list above to review scan results.");
+            }
             for plugin in &plugins {
-                let show = match instrument_filter {
-                    Some(true) => plugin.instrument || plugin.midi_source,
-                    Some(false) => !plugin.instrument || plugin.midi_source,
-                    None => true,
-                };
-                if !show {
+                if !plugin_picker_matches(plugin, filter) {
                     continue;
                 }
                 let prefix = if plugin.midi_source { "MIDI · " } else { "" };
@@ -1117,6 +1401,9 @@ fn draw_plugin_picker(
                 .desired_width(PATCH_NODE_WIDTH - 32.0),
         )
         .changed();
+    if available_count == 0 {
+        ui.small(filter.empty_message());
+    }
     changed
 }
 
@@ -1851,9 +2138,33 @@ fn start_folder_picker(file_ui: &mut ScoreFileUi) {
         .map(list_child_directories)
         .unwrap_or_default();
     file_ui.folder_picker = Some(FolderPicker {
+        purpose: FolderPickerPurpose::Vst3,
         directory,
         directories,
         selected: None,
+        orc_files: Vec::new(),
+        selected_orc: None,
+        error: None,
+    });
+}
+
+fn start_orc_picker(folder_picker: &mut Option<FolderPicker>, node_id: u64, params: &RustelParams) {
+    let trusted_root = std::path::PathBuf::from(params.csound_orchestra_root.lock().as_str());
+    let directory = trusted_root.is_dir().then_some(trusted_root);
+    let directories = directory
+        .as_deref()
+        .map(list_child_directories)
+        .unwrap_or_default();
+    let orc_files = directory.as_deref().map(list_orc_files).unwrap_or_default();
+    *folder_picker = Some(FolderPicker {
+        purpose: FolderPickerPurpose::CsoundOrc {
+            target_node_id: node_id,
+        },
+        directory,
+        directories,
+        selected: None,
+        orc_files,
+        selected_orc: None,
         error: None,
     });
 }
@@ -1861,14 +2172,17 @@ fn start_folder_picker(file_ui: &mut ScoreFileUi) {
 #[cfg(test)]
 mod vst_code_generation_tests {
     use super::{
-        find_vst_call_at_char, insert_code_at_char_range, insert_vst_parameter,
-        plugin_category_group, plugin_example, plugin_matches_search, plugin_midi_example,
-        plugin_midi_target_example, replace_char_range, sort_vst_plugins, text_at_char_range,
+        PluginPickerFilter, find_vst_call_at_char, insert_code_at_char_range, insert_vst_parameter,
+        list_orc_files, next_open_patch_position, plugin_category_group, plugin_example,
+        plugin_matches_search, plugin_midi_example, plugin_midi_target_example,
+        plugin_picker_matches, replace_char_range, sort_vst_plugins, text_at_char_range,
     };
     use crate::{
         engine::{VstParameterChoice, VstPluginEntry},
+        patch::PatchGraph,
         vst_catalog::VstSort,
     };
+    use std::fs;
 
     #[test]
     fn examples_choose_the_call_from_the_scanned_plugin_type() {
@@ -2036,6 +2350,87 @@ mod vst_code_generation_tests {
             ("Instruments".into(), "Synth".into())
         );
     }
+
+    #[test]
+    fn patch_plugin_pickers_separate_instruments_effects_and_midi_tags() {
+        let instrument = VstPluginEntry {
+            key: "keys".into(),
+            name: "Keys".into(),
+            vendor: String::new(),
+            categories: "Instrument|Synth".into(),
+            instrument: true,
+            display_label: String::new(),
+            midi_source: false,
+            order: 0,
+        };
+        let midi_effect = VstPluginEntry {
+            key: "arp".into(),
+            name: "Arpeggiator".into(),
+            vendor: String::new(),
+            categories: "Fx|MIDI".into(),
+            instrument: false,
+            display_label: String::new(),
+            midi_source: true,
+            order: 1,
+        };
+        let audio_effect = VstPluginEntry {
+            key: "verb".into(),
+            name: "Reverb".into(),
+            vendor: String::new(),
+            categories: "Fx|Reverb".into(),
+            instrument: false,
+            display_label: String::new(),
+            midi_source: false,
+            order: 2,
+        };
+
+        assert!(plugin_picker_matches(
+            &instrument,
+            PluginPickerFilter::Instrument
+        ));
+        assert!(!plugin_picker_matches(
+            &midi_effect,
+            PluginPickerFilter::Instrument
+        ));
+        assert!(plugin_picker_matches(
+            &midi_effect,
+            PluginPickerFilter::MidiSource
+        ));
+        assert!(!plugin_picker_matches(
+            &audio_effect,
+            PluginPickerFilter::MidiSource
+        ));
+        assert!(plugin_picker_matches(
+            &audio_effect,
+            PluginPickerFilter::Effect
+        ));
+    }
+
+    #[test]
+    fn new_patch_nodes_use_an_open_canvas_position_after_removals() {
+        let mut graph = PatchGraph::default();
+        let middle_node = graph.nodes[1].id;
+        assert!(graph.remove_node(middle_node));
+
+        assert_eq!(next_open_patch_position(&graph), [14.0, 264.0]);
+    }
+
+    #[test]
+    fn orc_picker_lists_only_orchestra_files() {
+        let directory =
+            std::env::temp_dir().join(format!("rustel-orc-picker-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("create ORC picker folder");
+        let first = directory.join("voice.orc");
+        let second = directory.join("zeta.ORC");
+        fs::write(&first, "instr voice\nendin").expect("write ORC file");
+        fs::write(&second, "instr zeta\nendin").expect("write ORC file");
+        fs::write(directory.join("score.strudel"), "note(\"c3\")").expect("write score");
+
+        assert_eq!(list_orc_files(&directory), vec![first, second]);
+
+        fs::remove_dir_all(directory).expect("remove ORC picker folder");
+    }
 }
 
 fn preferred_vst3_folder() -> Option<std::path::PathBuf> {
@@ -2080,6 +2475,49 @@ fn list_child_directories(directory: &std::path::Path) -> Vec<std::path::PathBuf
             .to_lowercase()
     });
     directories
+}
+
+fn list_orc_files(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut files = entries
+        .flatten()
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            let path = entry.path();
+            (file_type.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("orc")))
+            .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    files.sort_by_key(|path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    });
+    files
+}
+
+#[cfg(windows)]
+fn path_is_within(root: &std::path::Path, path: &std::path::Path) -> bool {
+    let root = root
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .collect::<Vec<_>>();
+    let path = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .collect::<Vec<_>>();
+    path.starts_with(&root)
+}
+
+#[cfg(not(windows))]
+fn path_is_within(root: &std::path::Path, path: &std::path::Path) -> bool {
+    path.starts_with(root)
 }
 
 fn folder_picker_roots() -> Vec<std::path::PathBuf> {
@@ -2128,6 +2566,88 @@ fn add_vst3_folder(
     }
 }
 
+fn attach_orc_file(
+    selected: std::path::PathBuf,
+    node_id: u64,
+    file_ui: &mut ScoreFileUi,
+    params: &RustelParams,
+    setter: &ParamSetter,
+) -> Result<(), String> {
+    let selected = std::fs::canonicalize(&selected)
+        .map_err(|error| format!("Could not open the selected ORC file: {error}"))?;
+    if !selected
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("orc"))
+    {
+        return Err("Choose a .orc orchestra file.".into());
+    }
+    let metadata = std::fs::metadata(&selected)
+        .map_err(|error| format!("Could not inspect the selected ORC file: {error}"))?;
+    if metadata.len() > 1024 * 1024 {
+        return Err("ORC files must be 1 MiB or smaller.".into());
+    }
+    std::fs::read_to_string(&selected)
+        .map_err(|error| format!("The ORC file must be readable UTF-8 text: {error}"))?;
+    let parent = selected
+        .parent()
+        .ok_or_else(|| "The selected ORC file has no parent folder.".to_owned())?;
+    let mut graph = file_ui.patch_graph.clone();
+    let existing_orcs = graph
+        .nodes
+        .iter()
+        .filter(|node| node.id != node_id)
+        .filter_map(|node| match &node.kind {
+            PatchNodeKind::Instrument {
+                instrument: InstrumentKind::Csound,
+                orc_file: Some(path),
+                ..
+            } => Some(std::path::PathBuf::from(path)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let current_root = std::path::PathBuf::from(params.csound_orchestra_root.lock().as_str())
+        .canonicalize()
+        .ok();
+    let update_root = !current_root
+        .as_deref()
+        .is_some_and(|root| path_is_within(root, &selected));
+    if update_root
+        && existing_orcs
+            .iter()
+            .any(|path| !path_is_within(parent, path))
+    {
+        return Err(
+            "Keep selected ORC files in one trusted folder. Clear other ORC selections before choosing a different folder."
+                .into(),
+        );
+    }
+    let node = graph
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == node_id)
+        .ok_or_else(|| "The Csound block no longer exists.".to_owned())?;
+    match &mut node.kind {
+        PatchNodeKind::Instrument {
+            instrument: InstrumentKind::Csound,
+            orc_file,
+            ..
+        } => *orc_file = Some(selected.to_string_lossy().into_owned()),
+        _ => return Err("The selected block is no longer a Csound instrument.".into()),
+    }
+    let saved = graph.to_json()?;
+    if update_root {
+        *params.csound_orchestra_root.lock() = parent.to_string_lossy().into_owned();
+    }
+    *params.patch_graph.lock() = saved;
+    file_ui.patch_graph = graph;
+    mark_dirty(setter, params);
+    file_ui.patch_message = format!(
+        "Attached {} to the Csound block. Generate Code adds its loadOrc call.",
+        selected.file_name().unwrap_or_default().to_string_lossy()
+    );
+    Ok(())
+}
+
 fn draw_folder_picker(
     ctx: &egui::Context,
     file_ui: &mut ScoreFileUi,
@@ -2137,21 +2657,41 @@ fn draw_folder_picker(
     let Some(picker) = file_ui.folder_picker.as_mut() else {
         return;
     };
+    let purpose = picker.purpose;
+    let is_orc_picker = matches!(purpose, FolderPickerPurpose::CsoundOrc { .. });
     let mut open = true;
     let mut selected_folder = None;
+    let mut selected_orc = None;
     let mut close = false;
-    egui::Window::new("Choose a VST3 plugin folder")
-        .id(egui::Id::new("rustel-vst3-folder-picker"))
+    let title = if is_orc_picker {
+        "Load a Csound ORC file"
+    } else {
+        "Choose a VST3 plugin folder"
+    };
+    let window_id = if is_orc_picker {
+        "rustel-csound-orc-picker"
+    } else {
+        "rustel-vst3-folder-picker"
+    };
+    egui::Window::new(title)
+        .id(egui::Id::new(window_id))
         .collapsible(false)
         .resizable(true)
         .open(&mut open)
         .show(ctx, |ui| {
-            ui.label("Choose a folder that contains .vst3 plugins.");
+            if is_orc_picker {
+                ui.label("Choose a local .orc file for this Csound instrument block.");
+                ui.small("Choosing a file trusts its containing folder for ORC loading.");
+            } else {
+                ui.label("Choose a folder that contains .vst3 plugins.");
+            }
             ui.horizontal(|ui| {
                 if ui.button("Computer / drives").clicked() {
                     picker.directory = None;
                     picker.directories.clear();
+                    picker.orc_files.clear();
                     picker.selected = None;
+                    picker.selected_orc = None;
                     picker.error = None;
                 }
                 if let Some(parent) = picker
@@ -2167,7 +2707,13 @@ fn draw_folder_picker(
                             .as_deref()
                             .map(list_child_directories)
                             .unwrap_or_default();
+                        picker.orc_files = picker
+                            .directory
+                            .as_deref()
+                            .map(list_orc_files)
+                            .unwrap_or_default();
                         picker.selected = None;
+                        picker.selected_orc = None;
                         picker.error = None;
                     }
                 }
@@ -2199,10 +2745,31 @@ fn draw_folder_picker(
                                 if ui.small_button("Open").clicked() {
                                     picker.directory = Some(child.clone());
                                     picker.directories = list_child_directories(&child);
+                                    picker.orc_files = list_orc_files(&child);
                                     picker.selected = None;
+                                    picker.selected_orc = None;
                                     picker.error = None;
                                 }
                             });
+                        }
+                        if is_orc_picker {
+                            ui.separator();
+                            ui.label("ORC files in this folder");
+                            if picker.orc_files.is_empty() {
+                                ui.small("No .orc files found here.");
+                            }
+                            for path in picker.orc_files.clone() {
+                                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                                if ui
+                                    .selectable_label(
+                                        picker.selected_orc.as_ref() == Some(&path),
+                                        name.to_string(),
+                                    )
+                                    .clicked()
+                                {
+                                    picker.selected_orc = Some(path);
+                                }
+                            }
                         }
                     } else {
                         for drive in folder_picker_roots() {
@@ -2210,7 +2777,9 @@ fn draw_folder_picker(
                             if ui.button(label).clicked() {
                                 picker.directory = Some(drive.clone());
                                 picker.directories = list_child_directories(&drive);
+                                picker.orc_files = list_orc_files(&drive);
                                 picker.selected = None;
+                                picker.selected_orc = None;
                                 picker.error = None;
                             }
                         }
@@ -2221,29 +2790,46 @@ fn draw_folder_picker(
             }
             ui.separator();
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        picker.directory.is_some(),
-                        egui::Button::new("Use current folder"),
-                    )
-                    .clicked()
-                {
-                    selected_folder = picker.directory.clone();
-                }
-                if ui
-                    .add_enabled(
-                        picker.selected.is_some(),
-                        egui::Button::new("Use selected folder"),
-                    )
-                    .clicked()
-                {
-                    selected_folder = picker.selected.clone();
+                if is_orc_picker {
+                    if ui
+                        .add_enabled(
+                            picker.selected_orc.is_some(),
+                            egui::Button::new("Load selected ORC"),
+                        )
+                        .clicked()
+                    {
+                        selected_orc = picker.selected_orc.clone();
+                    }
+                } else {
+                    if ui
+                        .add_enabled(
+                            picker.directory.is_some(),
+                            egui::Button::new("Use current folder"),
+                        )
+                        .clicked()
+                    {
+                        selected_folder = picker.directory.clone();
+                    }
+                    if ui
+                        .add_enabled(
+                            picker.selected.is_some(),
+                            egui::Button::new("Use selected folder"),
+                        )
+                        .clicked()
+                    {
+                        selected_folder = picker.selected.clone();
+                    }
                 }
                 if ui.button("Cancel").clicked() {
                     close = true;
                 }
             });
         });
+    let target_node_id = match purpose {
+        FolderPickerPurpose::Vst3 => None,
+        FolderPickerPurpose::CsoundOrc { target_node_id } => Some(target_node_id),
+    };
+    let _ = picker;
     if !open || close {
         file_ui.folder_picker = None;
     } else if let Some(selected) = selected_folder {
@@ -2251,6 +2837,15 @@ fn draw_folder_picker(
             add_vst3_folder(selected, file_ui, params, setter);
         } else if let Some(picker) = file_ui.folder_picker.as_mut() {
             picker.error = Some("That folder is no longer available.".into());
+        }
+    } else if let (Some(selected), Some(node_id)) = (selected_orc, target_node_id) {
+        match attach_orc_file(selected, node_id, file_ui, params, setter) {
+            Ok(()) => file_ui.folder_picker = None,
+            Err(error) => {
+                if let Some(picker) = file_ui.folder_picker.as_mut() {
+                    picker.error = Some(error);
+                }
+            }
         }
     }
 }

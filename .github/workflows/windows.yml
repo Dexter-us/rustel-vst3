@@ -34,16 +34,16 @@ jobs:
       - name: Run focused checks
         run: cargo test --workspace --locked -- --test-threads=1
       - name: Build the uniquely selected plugin library
-        run: cargo build --package rustel-vst3@0.1.11 --release --locked
+        run: cargo build --package rustel-vst3@0.1.12 --release --locked
       - name: Prepare the NIH bundler library path
         shell: pwsh
         run: |
           Copy-Item target/release/rustel_vst3.dll `
-            'target/release/rustel_vst3@0.1.11.dll' -Force
+            'target/release/rustel_vst3@0.1.12.dll' -Force
       - name: Build the Windows x64 VST3 bundle
-        run: cargo xtask bundle rustel-vst3@0.1.11 --release --locked
+        run: cargo xtask bundle rustel-vst3@0.1.12 --release --locked
       - name: Build the VST3 scan helper
-        run: cargo build --package rustel-vst3@0.1.11 --bin rustel-vst-worker --release --locked
+        run: cargo build --package rustel-vst3@0.1.12 --bin rustel-vst-worker --release --locked
       - name: Verify the scan helper does not open a console
         shell: pwsh
         run: |

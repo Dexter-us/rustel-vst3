@@ -105,6 +105,8 @@ pub enum PatchNodeKind {
     Instrument {
         instrument: InstrumentKind,
         value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orc_file: Option<String>,
     },
     Expression {
         signal: ExpressionSignal,
@@ -208,6 +210,7 @@ impl Default for PatchGraph {
                 PatchNodeKind::Instrument {
                     instrument: InstrumentKind::RustelSynth,
                     value: "sine".into(),
+                    orc_file: None,
                 },
                 [240.0, 24.0],
             )
@@ -252,6 +255,12 @@ impl PatchGraph {
         self.connections
             .retain(|connection| connection.source != id && connection.target != id);
         true
+    }
+
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.connections.clear();
+        self.next_id = 1;
     }
 
     pub fn connect(&mut self, source_id: u64, target_id: u64) -> Result<(), String> {
@@ -483,10 +492,32 @@ impl PatchGraph {
             [only] => only.clone(),
             many => format!("stack(\n  {}\n)", many.join(",\n  ")),
         };
-        let code = match midi_target {
-            Some(target) => format!("// MIDI target: {target}\n{body}"),
-            None => body,
-        };
+        let mut lines = Vec::new();
+        if let Some(target) = midi_target {
+            lines.push(format!("// MIDI target: {target}"));
+        }
+        let mut orc_files = self
+            .nodes
+            .iter()
+            .filter_map(|node| match &node.kind {
+                PatchNodeKind::Instrument {
+                    instrument: InstrumentKind::Csound,
+                    orc_file: Some(path),
+                    ..
+                } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        orc_files.sort_unstable();
+        orc_files.dedup();
+        for path in orc_files {
+            lines.push(format!(
+                "await loadOrc({});",
+                js_string_literal(&format!("local:{path}"))
+            ));
+        }
+        lines.push(body);
+        let code = lines.join("\n");
         if code.len() > 128 * 1024 {
             return Err("Generated score exceeds the Rustel score limit of 128 KiB.".into());
         }
@@ -564,7 +595,9 @@ impl PatchGraph {
                     hosted_midi_source: true,
                 }
             }
-            PatchNodeKind::Instrument { instrument, value } => {
+            PatchNodeKind::Instrument {
+                instrument, value, ..
+            } => {
                 let input = upstream()?;
                 if input.signal != PortKind::Midi {
                     return Err("An instrument needs a MIDI input.".into());
@@ -707,7 +740,7 @@ struct GeneratedExpression {
 }
 
 fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
-    let values: Vec<&str> = match kind {
+    let mut values: Vec<&str> = match kind {
         PatchNodeKind::NotePattern { expression } => vec![expression],
         PatchNodeKind::MidiVst { plugin, .. } => vec![plugin],
         PatchNodeKind::Instrument { value, .. } => vec![value],
@@ -715,6 +748,13 @@ fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
         PatchNodeKind::VstEffect { plugin, parameters } => vec![plugin, parameters],
         PatchNodeKind::Output => Vec::new(),
     };
+    if let PatchNodeKind::Instrument {
+        orc_file: Some(path),
+        ..
+    } = kind
+    {
+        values.push(path);
+    }
     for value in values {
         if value.len() > MAX_PATCH_TEXT_BYTES {
             return Err(format!(
@@ -734,10 +774,26 @@ fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
         {
             Err("Enter a scanned VST3 plugin name.".into())
         }
-        PatchNodeKind::Instrument { instrument, value } if value.trim().is_empty() => Err(format!(
+        PatchNodeKind::Instrument {
+            instrument, value, ..
+        } if value.trim().is_empty() => Err(format!(
             "Enter a value for the {} node.",
             instrument.label()
         )),
+        PatchNodeKind::Instrument {
+            instrument,
+            orc_file: Some(_),
+            ..
+        } if *instrument != InstrumentKind::Csound => {
+            Err("An ORC file can only be attached to a Csound instrument.".into())
+        }
+        PatchNodeKind::Instrument {
+            instrument: InstrumentKind::Csound,
+            orc_file: Some(path),
+            ..
+        } if !std::path::Path::new(path).is_absolute() => {
+            Err("Choose an ORC file from disk before generating this patch.".into())
+        }
         PatchNodeKind::Expression { suffix, .. }
             if suffix.trim().is_empty() || !suffix.trim().starts_with('.') =>
         {
@@ -829,6 +885,25 @@ mod tests {
     }
 
     #[test]
+    fn selected_csound_orc_is_loaded_before_generated_notes() {
+        let mut graph = PatchGraph::default();
+        let instrument = graph
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node.kind, PatchNodeKind::Instrument { .. }))
+            .expect("instrument");
+        instrument.kind = PatchNodeKind::Instrument {
+            instrument: InstrumentKind::Csound,
+            value: "fm_voice".into(),
+            orc_file: Some("/trusted/orchestra/fm.orc".into()),
+        };
+
+        let code = graph.generate_code().expect("Csound patch generates");
+        assert!(code.starts_with("await loadOrc(\"local:/trusted/orchestra/fm.orc\");"));
+        assert!(code.contains(".csoundm(\"fm_voice\")"));
+    }
+
+    #[test]
     fn hosted_midi_source_targets_an_instrument_and_preserves_note_expression() {
         let mut graph = PatchGraph::default();
         graph.nodes.clear();
@@ -855,6 +930,7 @@ mod tests {
                 PatchNodeKind::Instrument {
                     instrument: InstrumentKind::Vsti,
                     value: "Soft Keys".into(),
+                    orc_file: None,
                 },
                 [520.0, 24.0],
             )
@@ -911,6 +987,7 @@ mod tests {
                     PatchNodeKind::Instrument {
                         instrument,
                         value: value.into(),
+                        orc_file: None,
                     },
                     [480.0, 24.0],
                 )
@@ -958,6 +1035,7 @@ mod tests {
         instrument.kind = PatchNodeKind::Instrument {
             instrument: InstrumentKind::Graph,
             value: "sine(sFreq).mul(0.2).out()".into(),
+            orc_file: None,
         };
         let code = graph.generate_code().expect("graph patch generates");
         std::thread::Builder::new()
@@ -1049,6 +1127,44 @@ mod tests {
         let graph = PatchGraph::default();
         let saved = graph.to_json().expect("serialize patch");
         assert_eq!(PatchGraph::from_json(&saved).expect("restore patch"), graph);
+    }
+
+    #[test]
+    fn old_csound_instrument_nodes_restore_without_an_orc_file() {
+        let node = serde_json::from_str::<PatchNodeKind>(
+            r#"{"node_type":"instrument","instrument":"csound","value":"voice"}"#,
+        )
+        .expect("restore a saved Csound node");
+        assert!(matches!(
+            node,
+            PatchNodeKind::Instrument {
+                instrument: InstrumentKind::Csound,
+                orc_file: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn cleared_patch_persists_as_an_empty_canvas_and_accepts_new_nodes() {
+        let mut graph = PatchGraph::default();
+        graph.clear();
+        assert!(graph.nodes.is_empty());
+        assert!(graph.connections.is_empty());
+
+        let encoded = graph.to_json().expect("save empty canvas");
+        let mut restored = PatchGraph::from_json(&encoded).expect("restore empty canvas");
+        let note = restored
+            .add_node(
+                PatchNodeKind::NotePattern {
+                    expression: "note(\"c3\")".into(),
+                },
+                [14.0, 24.0],
+            )
+            .expect("add a block after clearing");
+
+        assert_eq!(restored.nodes[0].id, note);
+        assert_eq!(note, 1);
     }
 
     #[test]
