@@ -14,6 +14,9 @@ if (!(Test-Path -LiteralPath (Join-Path $Bundle "Contents\x86_64-win\Rustel.vst3
 if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot "RustelVstWorker.exe"))) {
     throw "The Rustel VST3 scan helper is missing beside this installer."
 }
+if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot "RustelMidiHost.exe"))) {
+    throw "The Rustel MIDI VST3 host helper is missing beside this installer."
+}
 foreach ($required in @("csound64.dll", "stdutil.dll")) {
     if (!(Test-Path -LiteralPath (Join-Path $CsoundRuntime $required))) {
         throw "The bundled Csound runtime is missing '$required' at '$CsoundRuntime'."
@@ -87,6 +90,8 @@ function Install-FileWithBackup {
 $vstTarget = Join-Path $Destination "Rustel.vst3"
 $workerSource = Join-Path $PSScriptRoot "RustelVstWorker.exe"
 $workerTarget = Join-Path $Destination "RustelVstWorker.exe"
+$midiHostSource = Join-Path $PSScriptRoot "RustelMidiHost.exe"
+$midiHostTarget = Join-Path $Destination "RustelMidiHost.exe"
 if ($PSCmdlet.ShouldProcess($CsoundDestination, "Install bundled Csound 6.18.1")) {
     Install-FolderWithBackup -Source $CsoundRuntime -Target $CsoundDestination
 }
@@ -95,6 +100,9 @@ if ($PSCmdlet.ShouldProcess($vstTarget, "Install Rustel VST3 for the current Win
 }
 if ($PSCmdlet.ShouldProcess($workerTarget, "Install Rustel VST3 scan helper")) {
     Install-FileWithBackup -Source $workerSource -Target $workerTarget
+}
+if ($PSCmdlet.ShouldProcess($midiHostTarget, "Install Rustel MIDI VST3 host helper")) {
+    Install-FileWithBackup -Source $midiHostSource -Target $midiHostTarget
 }
 
 if ($PSCmdlet.ShouldProcess("Current-user environment", "Configure Rustel to use bundled Csound")) {

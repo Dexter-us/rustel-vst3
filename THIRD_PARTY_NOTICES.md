@@ -31,6 +31,13 @@ The pinned framework's VST3 bindings and transitive dependencies have their own 
 - License: LGPL-2.1
 - The Windows download includes the unmodified runtime DLLs, the license text, and a link to the corresponding upstream source archive in `CSOUND-RUNTIME-NOTICE.md`.
 
+## JUCE MIDI host helper
+
+- Project: https://github.com/juce-framework/JUCE
+- Version: 8.0.6, fetched by `midi-host/CMakeLists.txt`
+- License: GNU AGPL-3.0 or a commercial JUCE license
+- The helper is built under the project's AGPL-3.0-or-later license. JUCE is fetched unmodified during the Windows build; its license and source are available from the linked upstream project.
+
 ## Baseview
 
 - Project: https://github.com/RustAudio/baseview

@@ -1,3 +1,4 @@
+use crate::live_midi::{LiveMidiBridge, LiveMidiEvent};
 use crate::vst_catalog::{VstCatalog, VstSort};
 use crate::{compiler, compiler::PreparedPlan, params::RustelParams};
 use crossbeam_queue::ArrayQueue;
@@ -10,6 +11,8 @@ use rustel_engine::{
     },
 };
 use std::{
+    path::PathBuf,
+    process::Child,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -52,6 +55,7 @@ pub struct HostTransport {
 pub struct VstPluginEntry {
     pub key: String,
     pub name: String,
+    pub bundle: PathBuf,
     pub vendor: String,
     pub categories: String,
     pub instrument: bool,
@@ -85,6 +89,11 @@ pub struct Shared {
     pub vst_sort: Mutex<VstSort>,
     pub vst_parameter_request: Mutex<Option<String>>,
     pub vst_parameter_state: Mutex<VstParameterState>,
+    pub live_midi: Option<LiveMidiBridge>,
+    pub live_midi_error: Option<String>,
+    live_midi_plugin: Mutex<Option<String>>,
+    midi_host_child: Mutex<Option<Child>>,
+    midi_host_config: Mutex<Option<PathBuf>>,
     pub peak: AtomicF32,
     pub bpm: AtomicU64,
     pub beat: AtomicU64,
@@ -99,6 +108,10 @@ pub struct Shared {
 
 impl Shared {
     fn new() -> Self {
+        let (live_midi, live_midi_error) = match LiveMidiBridge::new() {
+            Ok(bridge) => (Some(bridge), None),
+            Err(error) => (None, Some(error)),
+        };
         Self {
             status: Mutex::new("Waiting for the DAW to initialize audio.".into()),
             vst_plugins: Mutex::new(Vec::new()),
@@ -106,6 +119,11 @@ impl Shared {
             vst_sort: Mutex::new(VstSort::Name),
             vst_parameter_request: Mutex::new(None),
             vst_parameter_state: Mutex::new(VstParameterState::default()),
+            live_midi,
+            live_midi_error,
+            live_midi_plugin: Mutex::new(None),
+            midi_host_child: Mutex::new(None),
+            midi_host_config: Mutex::new(None),
             peak: AtomicF32::new(0.0),
             bpm: AtomicU64::new(120.0_f64.to_bits()),
             beat: AtomicU64::new(0.0_f64.to_bits()),
@@ -134,6 +152,56 @@ impl Shared {
         };
         *self.vst_parameter_request.lock() = Some(plugin.to_owned());
     }
+
+    pub fn open_live_midi_editor(&self, plugin: &VstPluginEntry) -> Result<(), String> {
+        if self.live_midi_plugin.lock().as_deref() != Some(plugin.name.as_str()) {
+            return Err(
+                "Evaluate the free-running MIDI Patch with this source and a Rustel synth target first."
+                    .into(),
+            );
+        }
+        let bridge = self.live_midi.as_ref().ok_or_else(|| {
+            self.live_midi_error
+                .clone()
+                .unwrap_or_else(|| "Rustel's live MIDI receiver is unavailable.".into())
+        })?;
+        let mut running = self.midi_host_child.lock();
+        if let Some(child) = running.as_mut() {
+            match child.try_wait() {
+                Ok(None) => return Err("The MIDI VST editor is already open.".into()),
+                Ok(Some(_)) => {
+                    running.take();
+                    if let Some(config) = self.midi_host_config.lock().take() {
+                        let _ = std::fs::remove_file(config);
+                    }
+                }
+                Err(error) => {
+                    return Err(format!("Could not check the MIDI VST editor: {error}"));
+                }
+            }
+        }
+        let (child, config_path) = crate::midi_host::launch(
+            &plugin.bundle,
+            &plugin.name,
+            bridge.port(),
+            &bridge.token_hex(),
+        )?;
+        *self.midi_host_config.lock() = Some(config_path);
+        *running = Some(child);
+        Ok(())
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.midi_host_child.get_mut().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(config) = self.midi_host_config.get_mut().take() {
+            let _ = std::fs::remove_file(config);
+        }
+    }
 }
 
 pub struct Engine {
@@ -150,6 +218,8 @@ pub struct Engine {
     free_beat: f64,
     was_playing: bool,
     last_midi_source_frame: Option<usize>,
+    live_midi_connected: bool,
+    live_midi_notes: [[bool; 128]; 16],
     gate: f32,
     midi_gate: f32,
     was_enabled: bool,
@@ -171,6 +241,8 @@ impl Engine {
             free_beat: 0.0,
             was_playing: false,
             last_midi_source_frame: None,
+            live_midi_connected: false,
+            live_midi_notes: [[false; 128]; 16],
             gate: 0.0,
             midi_gate: 0.0,
             was_enabled: true,
@@ -234,6 +306,7 @@ impl Engine {
         while Instant::now() < deadline {
             if let Some(plan) = self.shared.ready.pop() {
                 if plan.sample_rate == sample_rate.round() as u32 {
+                    *self.shared.live_midi_plugin.lock() = plan.live_midi_plugin.clone();
                     self.plan = Some(plan);
                     self.reset();
                     return true;
@@ -259,6 +332,8 @@ impl Engine {
         self.free_beat = 0.0;
         self.was_playing = false;
         self.last_midi_source_frame = None;
+        self.live_midi_connected = false;
+        self.live_midi_notes = [[false; 128]; 16];
         self.gate = 0.0;
         self.midi_gate = 0.0;
         self.was_enabled = self.params.enabled.value();
@@ -278,6 +353,7 @@ impl Engine {
             }
         }
         if let Some(mut plan) = self.shared.ready.pop() {
+            *self.shared.live_midi_plugin.lock() = plan.live_midi_plugin.clone();
             plan.backend.reset_at(self.frame);
             if let Some(backend) = &mut self.hosted_midi_backend {
                 backend.reset_at(self.frame);
@@ -289,6 +365,8 @@ impl Engine {
             }
             self.gate = 0.0;
             self.last_midi_source_frame = None;
+            self.live_midi_connected = false;
+            self.live_midi_notes = [[false; 128]; 16];
         }
     }
 
@@ -366,12 +444,88 @@ impl Engine {
             .as_ref()
             .map(|plan| plan.hosted_midi_synth)
             .unwrap_or_default();
+        let live_midi_enabled = self
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.live_midi_plugin.is_some());
+        let live_midi_connected = self
+            .shared
+            .live_midi
+            .as_ref()
+            .is_some_and(LiveMidiBridge::is_connected)
+            && live_midi_enabled;
+        if self.live_midi_connected && !live_midi_connected {
+            for (channel, notes) in self.live_midi_notes.iter_mut().enumerate() {
+                for (note, active) in notes.iter_mut().enumerate() {
+                    if *active
+                        && !queue_midi_release(
+                            &mut self.hosted_midi_backend,
+                            channel as u8,
+                            note as u8,
+                            self.frame,
+                        )
+                    {
+                        self.shared.refused.fetch_add(1, Ordering::Relaxed);
+                    }
+                    *active = false;
+                }
+            }
+        }
+        self.live_midi_connected = live_midi_connected;
         while offset < count {
             let frames = (count - offset).min(64);
             let mut pcm = [0.0_f32; 128];
             let mut midi_pcm = [0.0_f32; 128];
             let mut hosted_midi_pcm = [0.0_f32; 128];
             let block_end = offset + frames;
+            if let Some(bridge) = &self.shared.live_midi {
+                while let Some(event) = bridge.pop() {
+                    if !live_midi_enabled {
+                        continue;
+                    }
+                    let event_frame = self.frame + offset as u64;
+                    let queued = match event {
+                        LiveMidiEvent::NoteOn {
+                            channel,
+                            note,
+                            velocity,
+                        } if enabled && velocity.is_finite() && velocity > 0.0 => queue_midi_note(
+                            &mut self.hosted_midi_backend,
+                            channel,
+                            note,
+                            velocity.clamp(0.0, 1.0),
+                            event_frame,
+                            midi_style,
+                            Some(hosted_midi_synth),
+                        ),
+                        LiveMidiEvent::NoteOn { channel, note, .. }
+                        | LiveMidiEvent::NoteOff { channel, note } => queue_midi_release(
+                            &mut self.hosted_midi_backend,
+                            channel,
+                            note,
+                            event_frame,
+                        ),
+                    };
+                    if queued {
+                        match event {
+                            LiveMidiEvent::NoteOn {
+                                channel,
+                                note,
+                                velocity,
+                            } if enabled && velocity.is_finite() && velocity > 0.0 => {
+                                self.live_midi_notes[channel as usize][note as usize] = true;
+                            }
+                            LiveMidiEvent::NoteOn { channel, note, .. }
+                            | LiveMidiEvent::NoteOff { channel, note } => {
+                                self.live_midi_notes[channel as usize][note as usize] = false;
+                            }
+                        }
+                    }
+                    if !queued {
+                        self.shared.refused.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
             while let Some(event) = next_event {
                 if event.timing() as usize > block_end {
                     break;
@@ -927,6 +1081,7 @@ fn worker(shared: Arc<Shared>, params: Arc<RustelParams>) {
                             VstPluginEntry {
                                 key,
                                 name: plugin.name,
+                                bundle: plugin.bundle,
                                 vendor: plugin.vendor,
                                 categories: plugin.categories,
                                 instrument: plugin.instrument,

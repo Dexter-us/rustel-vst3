@@ -159,7 +159,10 @@ impl PatchNodeKind {
     }
 
     fn requires_input(&self) -> bool {
-        !matches!(self, Self::NotePattern { .. } | Self::Output)
+        !matches!(
+            self,
+            Self::NotePattern { .. } | Self::MidiVst { .. } | Self::Output
+        )
     }
 
     fn allows_multiple_inputs(&self) -> bool {
@@ -470,6 +473,7 @@ impl PatchGraph {
             .expect("validated output");
         let mut branches = Vec::new();
         let mut midi_target = None;
+        let mut live_midi_source = None;
         for wire in self
             .connections
             .iter()
@@ -487,6 +491,11 @@ impl PatchGraph {
                     );
                 }
             }
+            if let Some(source) = branch.live_midi_source {
+                if live_midi_source.replace(source).is_some() {
+                    return Err("A patch can have only one live MIDI VST3 source.".into());
+                }
+            }
             branches.push(branch.code);
         }
         branches.sort();
@@ -496,6 +505,12 @@ impl PatchGraph {
             many => format!("stack(\n  {}\n)", many.join(",\n  ")),
         };
         let mut lines = Vec::new();
+        if let Some(source) = live_midi_source {
+            lines.push(format!(
+                "// LIVE MIDI SOURCE: {}",
+                js_string_literal(&source)
+            ));
+        }
         if let Some(target) = midi_target {
             lines.push(format!("// MIDI target: {target}"));
         }
@@ -585,9 +600,20 @@ impl PatchGraph {
                 signal: PortKind::Midi,
                 midi_target: None,
                 hosted_midi_source: false,
+                live_midi_source: None,
             },
             PatchNodeKind::MidiVst { plugin, is_effect } => {
-                let input = upstream()?;
+                let Some(input_wire) = incoming else {
+                    visiting.remove(&node_id);
+                    return Ok(GeneratedExpression {
+                        code: String::new(),
+                        signal: PortKind::Midi,
+                        midi_target: None,
+                        hosted_midi_source: true,
+                        live_midi_source: Some(plugin.clone()),
+                    });
+                };
+                let input = self.render_node(input_wire.source, visiting)?;
                 if input.signal != PortKind::Midi {
                     return Err("A MIDI VST source needs a MIDI input.".into());
                 }
@@ -597,6 +623,7 @@ impl PatchGraph {
                     signal: PortKind::Midi,
                     midi_target: input.midi_target,
                     hosted_midi_source: true,
+                    live_midi_source: None,
                 }
             }
             PatchNodeKind::Instrument {
@@ -617,6 +644,7 @@ impl PatchGraph {
                         signal: PortKind::Audio,
                         midi_target: Some(instrument.midi_target(value.trim())?),
                         hosted_midi_source: true,
+                        live_midi_source: input.live_midi_source,
                     }
                 } else {
                     let code = match instrument {
@@ -642,6 +670,7 @@ impl PatchGraph {
                         signal: PortKind::Audio,
                         midi_target: None,
                         hosted_midi_source: false,
+                        live_midi_source: None,
                     }
                 }
             }
@@ -662,6 +691,7 @@ impl PatchGraph {
                     signal: port,
                     midi_target: input.midi_target,
                     hosted_midi_source: input.hosted_midi_source,
+                    live_midi_source: input.live_midi_source,
                 }
             }
             PatchNodeKind::VstEffect { plugin, parameters } => {
@@ -683,6 +713,7 @@ impl PatchGraph {
                     signal: PortKind::Audio,
                     midi_target: None,
                     hosted_midi_source: false,
+                    live_midi_source: None,
                 }
             }
             PatchNodeKind::Output => {
@@ -741,6 +772,7 @@ struct GeneratedExpression {
     signal: PortKind,
     midi_target: Option<String>,
     hosted_midi_source: bool,
+    live_midi_source: Option<String>,
 }
 
 fn validate_node_text(kind: &PatchNodeKind) -> Result<(), String> {
@@ -1057,6 +1089,45 @@ mod tests {
         assert!(code.contains("// MIDI target: vsti \"Soft Keys\""));
         assert!(code.contains(".vst(\"MIDI Arpeggiator\")"));
         assert!(code.contains("note(\"c4 e4\")"));
+    }
+
+    #[test]
+    fn unconnected_midi_source_generates_a_live_free_running_source() {
+        let mut graph = PatchGraph::default();
+        graph.nodes.clear();
+        graph.connections.clear();
+        let source = graph
+            .add_node(
+                PatchNodeKind::MidiVst {
+                    plugin: "MIDI Generator".into(),
+                    is_effect: true,
+                },
+                [20.0, 24.0],
+            )
+            .expect("MIDI VST");
+        let target = graph
+            .add_node(
+                PatchNodeKind::Instrument {
+                    instrument: InstrumentKind::RustelSynth,
+                    value: "sine".into(),
+                    orc_file: None,
+                },
+                [220.0, 24.0],
+            )
+            .expect("instrument");
+        let output = graph
+            .add_node(PatchNodeKind::Output, [420.0, 24.0])
+            .expect("output");
+        graph.connect(source, target).expect("MIDI VST to target");
+        graph.connect(target, output).expect("instrument to output");
+
+        let code = graph
+            .generate_code_with_orchestra_root("")
+            .expect("free-running MIDI source generates");
+        assert!(code.contains("// LIVE MIDI SOURCE: \"MIDI Generator\""));
+        assert!(code.contains("// MIDI target: rustel \"sine\""));
+        assert!(!code.contains(".vst(\"MIDI Generator\")"));
+        assert!(!code.contains("note(\"c3 e3 g3\")"));
     }
 
     #[test]

@@ -220,8 +220,18 @@ pub fn create(params: Arc<RustelParams>, shared: Arc<Shared>) -> Option<Box<dyn 
                     if refused > 0 {
                         ui.colored_label(Color32::YELLOW, format!("{refused} notes exceeded capacity"));
                     }
+                    let dropped_live_midi = shared
+                        .live_midi
+                        .as_ref()
+                        .map_or(0, |bridge| bridge.dropped_count());
+                    if dropped_live_midi > 0 {
+                        ui.colored_label(
+                            Color32::YELLOW,
+                            format!("{dropped_live_midi} live MIDI event(s) were dropped"),
+                        );
+                    }
                 });
-                ui.small("VST3 instruments and effects are hosted by Rustel and rendered into the repeating phrase.");
+                ui.small("Score-based VST3 phrases repeat; free-running MIDI sources stream into Rustel synths.");
                 ui.small("DAW MIDI uses the score's first oscillator sound, or sine by default.");
                 ui.add_space(6.0);
             });
@@ -654,12 +664,12 @@ fn insert_code_at_char_range(
     (result, start + insertion.chars().count())
 }
 
-const PATCH_NODE_WIDTH: f32 = 184.0;
-const PATCH_NODE_HEIGHT: f32 = 140.0;
-const PATCH_NODE_CONTENT_HEIGHT: f32 = 96.0;
-const PATCH_NODE_COLUMN_STEP: f32 = 204.0;
-const PATCH_NODE_ROW_STEP: f32 = 208.0;
-const PATCH_NODE_COLLISION_HEIGHT: f32 = PATCH_NODE_HEIGHT + 56.0;
+const PATCH_NODE_WIDTH: f32 = 158.0;
+const PATCH_NODE_HEIGHT: f32 = 112.0;
+const PATCH_NODE_CONTENT_HEIGHT: f32 = 60.0;
+const PATCH_NODE_COLUMN_STEP: f32 = 178.0;
+const PATCH_NODE_ROW_STEP: f32 = 158.0;
+const PATCH_NODE_COLLISION_HEIGHT: f32 = PATCH_NODE_HEIGHT + 36.0;
 
 #[derive(Clone, Copy)]
 enum PluginPickerFilter {
@@ -1067,6 +1077,11 @@ fn draw_patch_editor(
     for index in 0..file_ui.patch_graph.nodes.len() {
         let node = &mut file_ui.patch_graph.nodes[index];
         let id = node.id;
+        let midi_input_connected = file_ui
+            .patch_graph
+            .connections
+            .iter()
+            .any(|wire| wire.target == id);
         let screen_position =
             canvas_rect.min + file_ui.patch_pan + egui::vec2(node.position[0], node.position[1]);
         let mut actions = PatchNodeActions::default();
@@ -1086,27 +1101,18 @@ fn draw_patch_editor(
                         ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
                         let mut node_drag_delta = egui::Vec2::ZERO;
                         ui.horizontal(|ui| {
-                            let handle = ui
-                                .add(
-                                    egui::Label::new(
-                                        RichText::new("⋮⋮").color(Color32::from_gray(160)),
-                                    )
-                                    .sense(egui::Sense::drag()),
-                                )
-                                .on_hover_text("Drag to move this block");
-                            if handle.dragged() {
-                                node_drag_delta = handle.drag_delta();
-                            }
+                            let drag_width = (PATCH_NODE_WIDTH - 12.0 - 26.0).max(40.0);
                             let drag = ui
-                                .add(
+                                .add_sized(
+                                    [drag_width, 20.0],
                                     egui::Label::new(
-                                        RichText::new(node.kind.title())
+                                        RichText::new(format!("⋮⋮ {}", node.kind.title()))
                                             .strong()
                                             .color(Color32::from_rgb(202, 187, 246)),
                                     )
                                     .sense(egui::Sense::drag()),
                                 )
-                                .on_hover_text("Drag to move this block");
+                                .on_hover_text("Drag anywhere across this header to move the block");
                             if drag.dragged() {
                                 node_drag_delta = drag.drag_delta();
                             }
@@ -1133,6 +1139,8 @@ fn draw_patch_editor(
                                     shared,
                                     &mut file_ui.folder_picker,
                                     params,
+                                    &mut file_ui.patch_message,
+                                    midi_input_connected,
                                 );
                             });
                         ui.add_space(4.0);
@@ -1143,13 +1151,21 @@ fn draw_patch_editor(
                                     .connections
                                     .iter()
                                     .any(|wire| wire.target == id);
+                                let optional_midi = matches!(node.kind, PatchNodeKind::MidiVst { .. });
                                 let label = if connected {
                                     format!("← {} In ✓", input.label())
+                                } else if optional_midi {
+                                    "← MIDI In?".to_owned()
                                 } else {
                                     format!("← {} In", input.label())
                                 };
                                 let response =
-                                    ui.small_button(RichText::new(label).color(port_color(input)));
+                                    ui.small_button(RichText::new(label).color(port_color(input)))
+                                        .on_hover_text(if optional_midi {
+                                            "Optional. Leave unconnected for a free-running MIDI generator, or connect a Note Pattern to drive a MIDI processor."
+                                        } else {
+                                            "Click an output first, then click this input."
+                                        });
                                 actions.input_port = Some(response.rect.center());
                                 if response.clicked() {
                                     actions.input_clicked = true;
@@ -1266,6 +1282,8 @@ fn draw_patch_node_fields(
     shared: &Shared,
     folder_picker: &mut Option<FolderPicker>,
     params: &RustelParams,
+    patch_message: &mut String,
+    midi_input_connected: bool,
 ) -> bool {
     let mut changed = false;
     match kind {
@@ -1284,7 +1302,34 @@ fn draw_patch_node_fields(
                 ui.small("Plugin type");
                 changed |= ui.checkbox(is_effect, "MIDI effect").changed();
             });
-            ui.small("Choose a scanned plugin that outputs MIDI.");
+            if midi_input_connected {
+                ui.small("The connected Note Pattern drives this MIDI processor.");
+            } else {
+                ui.small("Leave the MIDI input unconnected to run a free-running generator.");
+                ui.small("Live streaming currently targets Rustel synths; connect a pattern for other targets.");
+                ui.small("The VST editor opens by itself; streaming starts automatically.");
+                if ui.button("Open MIDI VST editor").clicked() {
+                    let entry = shared
+                        .vst_plugins
+                        .lock()
+                        .iter()
+                        .find(|entry| entry.name == *plugin && entry.midi_source)
+                        .cloned();
+                    match entry {
+                        Some(entry) => match shared.open_live_midi_editor(&entry) {
+                            Ok(()) => {
+                                *patch_message =
+                                    "The MIDI VST editor opened and is streaming to the Rustel synth. Close it to stop.".into();
+                            }
+                            Err(error) => *patch_message = error,
+                        },
+                        None => {
+                            *patch_message =
+                                "Mark this scanned plugin as a MIDI source, then rescan.".into();
+                        }
+                    }
+                }
+            }
             changed |= draw_plugin_picker(ui, plugin, id, shared, PluginPickerFilter::MidiSource);
         }
         PatchNodeKind::Instrument {
@@ -2579,6 +2624,7 @@ mod vst_code_generation_tests {
         let plugin = |key: &str, name: &str, label: &str, midi_source, order| VstPluginEntry {
             key: key.into(),
             name: name.into(),
+            bundle: std::path::PathBuf::new(),
             vendor: String::new(),
             categories: "Fx|Tools".into(),
             instrument: false,
@@ -2607,6 +2653,7 @@ mod vst_code_generation_tests {
         let synth = VstPluginEntry {
             key: "synth".into(),
             name: "Super Synth".into(),
+            bundle: std::path::PathBuf::new(),
             vendor: "Audio Co".into(),
             categories: "Instrument|Synth".into(),
             instrument: true,
@@ -2628,6 +2675,7 @@ mod vst_code_generation_tests {
         let instrument = VstPluginEntry {
             key: "keys".into(),
             name: "Keys".into(),
+            bundle: std::path::PathBuf::new(),
             vendor: String::new(),
             categories: "Instrument|Synth".into(),
             instrument: true,
@@ -2638,6 +2686,7 @@ mod vst_code_generation_tests {
         let midi_effect = VstPluginEntry {
             key: "arp".into(),
             name: "Arpeggiator".into(),
+            bundle: std::path::PathBuf::new(),
             vendor: String::new(),
             categories: "Fx|MIDI".into(),
             instrument: false,
@@ -2648,6 +2697,7 @@ mod vst_code_generation_tests {
         let audio_effect = VstPluginEntry {
             key: "verb".into(),
             name: "Reverb".into(),
+            bundle: std::path::PathBuf::new(),
             vendor: String::new(),
             categories: "Fx|Reverb".into(),
             instrument: false,
@@ -2692,7 +2742,7 @@ mod vst_code_generation_tests {
         let middle_node = graph.nodes[1].id;
         assert!(graph.remove_node(middle_node));
 
-        assert_eq!(next_open_patch_position(&graph), [218.0, 24.0]);
+        assert_eq!(next_open_patch_position(&graph), [192.0, 24.0]);
     }
 
     #[test]

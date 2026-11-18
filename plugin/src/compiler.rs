@@ -32,6 +32,7 @@ pub struct PreparedPlan {
     pub hosted_midi_synth: RustelMidiSynth,
     pub requires_csound: bool,
     pub rendered_source: Option<&'static str>,
+    pub live_midi_plugin: Option<String>,
     pub period_beats: f64,
     pub rendered_bpm: f64,
     pub sample_rate: u32,
@@ -141,6 +142,24 @@ fn midi_target(source: &str) -> Result<Option<HostedMidiTarget>, String> {
         }
     }
     Ok(target)
+}
+
+fn live_midi_source(source: &str) -> Result<Option<String>, String> {
+    let mut selected = None;
+    for line in source.lines() {
+        let Some(value) = line.trim().strip_prefix("// LIVE MIDI SOURCE: ") else {
+            continue;
+        };
+        let name = serde_json::from_str::<String>(value.trim())
+            .map_err(|_| "The live MIDI source name is invalid.".to_owned())?;
+        if name.trim().is_empty() || name.chars().any(char::is_control) {
+            return Err("The live MIDI source name is invalid.".into());
+        }
+        if selected.replace(name).is_some() {
+            return Err("A score can contain only one live MIDI source.".into());
+        }
+    }
+    Ok(selected)
 }
 
 fn unquote_target_payload(payload: &str) -> &str {
@@ -544,10 +563,49 @@ pub fn compile(
     if source.len() > 128 * 1024 {
         return Err("Score exceeds the 128 KiB limit.".into());
     }
+    let live_source = live_midi_source(source)?;
     let midi_target = midi_target(source)?;
     let uses_vst = !rustel_runtime::vst::names_in_source(source).is_empty();
-    if midi_target.is_some() && !uses_vst {
+    if midi_target.is_some() && !uses_vst && live_source.is_none() {
         return Err("A MIDI target needs a hosted VST3 MIDI source in the score.".into());
+    }
+    if let Some(source_name) = live_source {
+        if !matches!(midi_target.as_ref(), Some(HostedMidiTarget::Rustel(_))) {
+            return Err(
+                "Live MIDI streaming currently needs a Rustel synth target. Connect a Note Pattern to use other instrument types."
+                    .into(),
+            );
+        }
+        let Some(HostedMidiTarget::Rustel(synth)) = midi_target else {
+            unreachable!("live MIDI target was checked above");
+        };
+        let period_beats = f64::from(cycles * beats_per_cycle);
+        if !period_beats.is_finite()
+            || period_beats <= 0.0
+            || !bpm.is_finite()
+            || bpm <= 0.0
+            || !(8_000..=192_000).contains(&sample_rate)
+        {
+            return Err(
+                "Live MIDI playback needs a valid tempo, phrase length, and sample rate.".into(),
+            );
+        }
+        return Ok(Box::new(PreparedPlan {
+            backend: ScalarBackend::prepared(sample_rate, 64)?,
+            notes: Vec::new(),
+            rendered_phrase: None,
+            midi_output_events: Vec::new(),
+            hosted_midi_synth: synth,
+            requires_csound: false,
+            rendered_source: Some("Free-running MIDI VST3"),
+            live_midi_plugin: Some(source_name.clone()),
+            period_beats,
+            rendered_bpm: bpm,
+            sample_rate,
+            diagnostics: format!(
+                "Live MIDI source: {source_name}. Open its editor and start streaming."
+            ),
+        }));
     }
     if matches!(midi_target.as_ref(), Some(HostedMidiTarget::Csound(_))) && !allow_csound {
         return Err("Enable Csound support before routing hosted MIDI to Csound.".into());
@@ -741,6 +799,7 @@ pub fn compile(
                 _ if uses_vst => "VST3-rendered phrase",
                 _ => "Csound-rendered phrase",
             }),
+            live_midi_plugin: None,
             period_beats,
             rendered_bpm: bpm,
             sample_rate,
@@ -810,6 +869,7 @@ pub fn compile(
         hosted_midi_synth: RustelMidiSynth::Sine,
         requires_csound: false,
         rendered_source: None,
+        live_midi_plugin: None,
         period_beats,
         rendered_bpm: bpm,
         sample_rate,
@@ -852,6 +912,59 @@ mod midi_routing_tests {
         assert!(midi_target("// MIDI target: vsti \"\"").is_err());
         assert!(midi_target("// MIDI target: rustel \"unknown\"").is_err());
         assert!(midi_target("// MIDI target: vsti \"one\"\n// MIDI target: vsti \"two\"").is_err());
+    }
+
+    #[test]
+    fn parses_a_single_live_midi_source_marker() {
+        assert_eq!(
+            live_midi_source("// LIVE MIDI SOURCE: \"MIDI \\\"Generator\\\"\""),
+            Ok(Some("MIDI \"Generator\"".into()))
+        );
+        assert!(
+            live_midi_source(
+                "// LIVE MIDI SOURCE: \"Generator A\"\n// LIVE MIDI SOURCE: \"Generator B\""
+            )
+            .is_err()
+        );
+        assert!(live_midi_source("// LIVE MIDI SOURCE: not-json").is_err());
+    }
+
+    #[test]
+    fn free_running_midi_source_builds_a_live_rustel_synth_plan() {
+        let plan = compile(
+            "// LIVE MIDI SOURCE: \"MIDI Generator\"\n// MIDI target: rustel \"triangle\"",
+            48_000,
+            120.0,
+            2,
+            4,
+            false,
+            "",
+            "",
+            &AtomicBool::new(false),
+        )
+        .expect("live MIDI source plan");
+        assert!(plan.rendered_phrase.is_none());
+        assert_eq!(plan.hosted_midi_synth, RustelMidiSynth::Triangle);
+        assert_eq!(plan.rendered_source, Some("Free-running MIDI VST3"));
+    }
+
+    #[test]
+    fn live_midi_source_requires_a_supported_live_target() {
+        let error = match compile(
+            "// LIVE MIDI SOURCE: \"MIDI Generator\"\n// MIDI target: sample \"bd\"",
+            48_000,
+            120.0,
+            2,
+            4,
+            false,
+            "",
+            "",
+            &AtomicBool::new(false),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("live sample target should be rejected"),
+        };
+        assert!(error.contains("Rustel synth target"));
     }
 
     #[test]

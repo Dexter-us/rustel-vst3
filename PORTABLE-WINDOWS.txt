@@ -2,8 +2,8 @@ Rustel for Windows — portable ZIP
 
 This archive has no installer and does not change persistent Windows settings.
 Extract the whole ZIP to a folder you want to keep. Keep Rustel.vst3,
-RustelVstWorker.exe, and CsoundRuntime together in that folder; Rustel finds
-its bundled Csound and VST3 scan helper automatically. Rustel creates
+RustelVstWorker.exe, RustelMidiHost.exe, and CsoundRuntime together in that
+folder; Rustel finds its bundled Csound and VST3 helpers automatically. Rustel creates
 RustelData for plugin scan cache and presets the first time it scans plugins.
 Load and Save use an in-plugin browser for a Scores subfolder beside the plugin
 bundle. Rustel creates that folder when needed, so saved scores move with the
@@ -18,7 +18,7 @@ default; only load orchestra files you trust.
 
 In VSTHost, add the extracted folder to the VST3 plugin scan paths and rescan.
 If you prefer the standard VST3 folder, copy Rustel.vst3, RustelVstWorker.exe,
-and CsoundRuntime there as sibling entries. Do not copy only the inner
+RustelMidiHost.exe, and CsoundRuntime there as sibling entries. Do not copy only the inner
 Rustel.vst3 binary.
 
 The archive also contains rustel.exe, the full upstream command-line app, and
@@ -39,6 +39,16 @@ Rustel also accepts MIDI note input from VSTHost. Route the MIDI output of a
 MIDI-generating plugin or MIDI-outputting VSTi to Rustel. Note velocity and
 note-off are supported; MIDI notes use the active score's first basic
 oscillator waveform, or sine if the score has none.
+
+For a free-running MIDI VST3 generator, add its MIDI Source node in Patch and
+leave its MIDI input unconnected. Connect it to a Rustel synth node, generate
+the Patch, and press Evaluate. Then use **Open MIDI VST editor** on the
+source node. The plugin's own editor opens in a separate window and MIDI
+streaming starts automatically. Its live notes play the connected Rustel
+synth. Close the editor window to stop streaming. This live mode currently
+supports Rustel synth nodes; use a Note Pattern for Csound, samples, wavetable,
+graph, and hosted VSTi targets. The helper runs independently of VSTHost's
+transport and tempo.
 
 The Microsoft Visual C++ 2015–2022 x64 runtime may be needed for Csound. If
 Windows reports a missing VCRUNTIME or MSVCP DLL, install Microsoft's official

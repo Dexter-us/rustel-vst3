@@ -225,12 +225,12 @@
         <p>The portable download needs no installer and does not change Windows settings. Keep the extracted folder together so the plugin can find its bundled Csound files.</p>
         <ol class="steps">
           <li>Download <strong>Rustel-Windows-x64-Portable.zip</strong> from a successful Windows build and extract the entire ZIP to a folder you want to keep.</li>
-          <li>Keep <code>Rustel.vst3</code>, <code>RustelVstWorker.exe</code>, and <code>CsoundRuntime</code> in the same extracted folder. The ZIP also includes <code>rustel.exe</code> and licenses.</li>
+          <li>Keep <code>Rustel.vst3</code>, <code>RustelVstWorker.exe</code>, <code>RustelMidiHost.exe</code>, and <code>CsoundRuntime</code> in the same extracted folder. The ZIP also includes <code>rustel.exe</code> and licenses.</li>
           <li>Add the extracted folder to VSTHost’s plugin scan paths, rescan, then load <strong>Rustel</strong> as an instrument.</li>
           <li>Start DAW playback. Wait for the editor status to say <strong>Ready</strong>, then press <strong>Evaluate</strong> to apply the score.</li>
         </ol>
         <div class="callout">
-          <p><strong>Installer option:</strong> The full build artifact also includes <code>install-windows.ps1</code>. It installs the plugin, VST3 scan helper, and Csound for the current Windows user. Review the script before running it, and restart the DAW afterward.</p>
+          <p><strong>Installer option:</strong> The full build artifact also includes <code>install-windows.ps1</code>. It installs the plugin, VST3 helpers, and Csound for the current Windows user. Review the script before running it, and restart the DAW afterward.</p>
           <p>Build artifacts are temporary development downloads and expire after 14 days. They are not stable releases.</p>
         </div>
       </section>
@@ -308,12 +308,20 @@ note("c4 ~ e4").vsti("MIDI generator")</code></pre>
           <li>Click <strong>Generate Code</strong>. Rustel validates the graph and replaces the current score draft with generated code. Switch to <strong>Score</strong>, review it, then press <strong>Evaluate</strong>.</li>
         </ol>
         <p>For Csound, choose <strong>Load ORC from disk…</strong> inside the Csound instrument block, then enter the instrument name declared in that file. The picker opens in the portable <code>Scores</code> folder; ORCs there are saved as relative references and follow the package if it moves. Rustel updates the trusted folder and rebases older saved portable paths when possible. Enable <strong>Allow native Csound</strong>, generate the code, review it in Score, then press <strong>Evaluate</strong>. Only load Csound source you trust.</p>
-        <p>The default patch is a note pattern connected to a Rustel synth and Audio output. A hosted MIDI VST source can feed one Rustel synth, sample, wavetable, KabelSalat graph, Csound instrument, or hosted VSTi target. The graph is saved in the DAW's plugin state. Generation is one-way: Rustel does not convert handwritten score code back into blocks.</p>
+        <p>The default patch is a note pattern connected to a Rustel synth and Audio output. Pattern-driven MIDI can feed one Rustel synth, sample, wavetable, KabelSalat graph, Csound instrument, or hosted VSTi target. The graph is saved in the DAW's plugin state. Generation is one-way: Rustel does not convert handwritten score code back into blocks.</p>
+        <h3>Run a free-running MIDI VST3</h3>
+        <ol>
+          <li>Add a MIDI VST3 source, leave its MIDI input unconnected, and connect it to a Rustel synth node.</li>
+          <li>Click <strong>Generate Code</strong>, review the generated score, then press <strong>Evaluate</strong>.</li>
+          <li>On the MIDI source block, click <strong>Open MIDI VST editor</strong>. Rustel opens the plugin's own editor in a separate window, not a helper control panel.</li>
+          <li>Adjust the plugin in its editor. MIDI streaming starts automatically when the editor opens; its note-on, note-off, and velocity events play the connected Rustel synth. Close the editor window to stop.</li>
+        </ol>
+        <p>This live mode currently supports Rustel synth targets only. Use a connected Note Pattern for samples, wavetables, KabelSalat, Csound, and hosted VSTi targets. The companion host has its own audio clock and does not follow the DAW's transport or tempo.</p>
         <p>For an ordinary audio-effect chain, connect a note pattern to an instrument, connect its audio output to a VST3 effect, then connect that effect to Audio output. The current renderer does not apply a downstream audio effect to the separately rendered branch from a hosted MIDI target.</p>
         <pre><code>(note("c3 e3 g3")).vsti("Your instrument").vst("Your effect", { mix: 0.5 })</code></pre>
-        <p>Rustel hosts VST3, not VST2. Scanning runs in the helper process, but plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> beside the plugin bundle.</p>
+        <p>Rustel hosts VST3, not VST2. Scanning runs in the scan helper process, but plugin rendering happens in the DAW process; a faulty third-party plugin can still crash or hang the DAW. Only use plugins you trust. Keep <code>RustelVstWorker.exe</code> and <code>RustelMidiHost.exe</code> beside the plugin bundle. The MIDI helper is a separate host for free-running generators; it is not a VST3 plugin.</p>
         <div class="callout">
-          <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Hosted VST3 MIDI output is routed through the target directive above.</p>
+          <p><strong>Separate MIDI routes:</strong> DAW MIDI input is described in <a href="#midi">MIDI input</a>. Pattern-rendered hosted MIDI is routed through the target directive above; free-running sources use the companion MIDI helper.</p>
         </div>
         <p>VST3 scan results and presets are stored in <code>RustelData</code> beside the portable package, unless the process already has <code>RUSTEL_CONFIG_DIR</code> set. Cached scan results—including failures—are reused between launches while a plugin bundle remains unchanged. Installing or changing a plugin causes it to be scanned again. To retry unchanged bundles, delete only <code>RustelData/vst/scan.json</code>; this leaves saved presets in place. The portable package does not change persistent Windows settings.</p>
       </section>

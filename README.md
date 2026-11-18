@@ -17,7 +17,8 @@ The source passes `cargo check --workspace --locked` on Linux with Rust 1.98.1. 
 - Host installed x64 VST3 instruments with `.vsti("name")` and audio effects with `.vst("name", { parameter: value })`.
 - Scan the standard Windows VST3 folders and browse to add extra plugin folders without changing Windows environment settings. The bundled scan helper runs without a console window.
 - Accept DAW MIDI note-on/off and velocity input; MIDI notes use the first basic oscillator sound in the active score.
-- Capture note-on/off and velocity from hosted VST3 MIDI generators/processors. Route the output to Rustel synths, samples, wavetables, KabelSalat graphs, Csound instruments, or hosted VSTi plugins.
+- Capture note-on/off and velocity from hosted VST3 MIDI generators/processors and route phrase-rendered output to Rustel synths, samples, wavetables, KabelSalat graphs, Csound instruments, or hosted VSTi plugins.
+- Open a free-running MIDI VST3 generator in the separate `RustelMidiHost.exe` companion window and stream its notes live to a Rustel synth node in Patch.
 - Play stereo audio following DAW play/stop, tempo, song position, and loop jumps.
 - Select **1–64 phrase cycles** and **1–16 quarter-note beats per cycle**. Defaults: 16 cycles, four beats per cycle.
 - Save the draft, last accepted score, phrase settings, gain, transport options, and window state inside the DAW project.
@@ -32,7 +33,9 @@ This prototype evaluates the selected number of cycles on a background worker an
 
 This design keeps JavaScript, queries, allocation, plugin loading, and score-resource loading out of the plugin callback and allows playback without a just-in-time scheduling worker during an offline bounce. Live code edits replace the phrase when preparation finishes, not on a quantized boundary. Scores that use Csound or hosted VST3 plugins render the selected phrase off-thread before playback; the rendered result repeats exactly until the next evaluation.
 
-Hosted MIDI routing is bounded to the prepared phrase. It currently carries note-on, note-off, and velocity only; MIDI CC, pitch bend, aftertouch, and SysEx are not routed. Built-in Rustel targets include the four oscillator waveforms, supersaw, pulse, SBD, noise colors, bytebeat, ZzFX, and one; sample, wavetable, KabelSalat graph, Csound, and hosted VSTi targets are also supported.
+Phrase-rendered hosted MIDI routing is bounded to the prepared phrase. It currently carries note-on, note-off, and velocity only; MIDI CC, pitch bend, aftertouch, and SysEx are not routed. Built-in Rustel targets include the four oscillator waveforms, supersaw, pulse, SBD, noise colors, bytebeat, ZzFX, and one; sample, wavetable, KabelSalat graph, Csound, and hosted VSTi targets are supported for phrase-rendered MIDI.
+
+Free-running MIDI streaming is a separate mode: leave the MIDI Source input unconnected, connect it to a Rustel synth node, generate the Patch, and press **Evaluate**. Then select **Open MIDI VST editor**. The plugin's own GUI opens in a separate window and starts streaming automatically; closing it stops the stream. Live streaming currently targets Rustel synth nodes only; use a Note Pattern for other instrument families. The companion host runs on its own audio clock and does not follow the DAW's transport or tempo.
 
 Notes and gates follow DAW tempo without pitch shifting. Tempo-dependent effect settings are re-prepared in the background, so those settings can briefly lag a tempo change. DAW transport overrides score `setcps`/`setcpm`. Seeking and loop jumps reset sounding voices; sustained notes that began before the new position are not reconstructed.
 
@@ -40,8 +43,8 @@ Notes and gates follow DAW tempo without pitch shifting. Tempo-dependent effect 
 
 1. Open this repository's **Actions → Windows VST3** page.
 2. Open a successful run and download **Rustel-Windows-x64**.
-3. For portable use, download `Rustel-Windows-x64-Portable.zip` from the run's artifact and extract the whole ZIP to a folder you want to keep. Add that folder to VSTHost's plugin scan paths and rescan. Keep `Rustel.vst3`, `RustelVstWorker.exe`, and `CsoundRuntime` together; Rustel finds its helper and Csound runtime there. The package also includes `Rustel-Help.html`, `rustel.exe`, and the upstream CLI. Read the guide online at [Rustel Help](https://dexter-us.github.io/rustel-vst3/).
-4. Or extract the complete `Rustel-Windows-x64` artifact and run `install-windows.ps1` from PowerShell after reviewing it. It installs Rustel, its VST3 scan helper, and Csound 6.18.1 for your Windows user, configures the paths Rustel needs, and preserves any previous install in a backup folder.
+3. For portable use, download `Rustel-Windows-x64-Portable.zip` from the run's artifact and extract the whole ZIP to a folder you want to keep. Add that folder to VSTHost's plugin scan paths and rescan. Keep `Rustel.vst3`, `RustelVstWorker.exe`, `RustelMidiHost.exe`, and `CsoundRuntime` together; Rustel finds its helpers and Csound runtime there. The package also includes `Rustel-Help.html`, `rustel.exe`, and the upstream CLI. Read the guide online at [Rustel Help](https://dexter-us.github.io/rustel-vst3/).
+4. Or extract the complete `Rustel-Windows-x64` artifact and run `install-windows.ps1` from PowerShell after reviewing it. It installs Rustel, its VST3 scan helpers, and Csound 6.18.1 for your Windows user, configures the paths Rustel needs, and preserves any previous install in a backup folder.
 5. Reopen your DAW, rescan VST3 plugins, and load **Rustel** as an instrument on a track.
 
 The installer needs no administrator permission. It puts the plugin in `%LOCALAPPDATA%\Programs\Common\VST3` and Csound in `%LOCALAPPDATA%\Programs\Rustel\Csound-6.18.1`. Existing files are renamed to a timestamped backup before replacement. The installer sets per-user `RUSTEL_CSOUND_LIBRARY`, `OPCODE6DIR64`, and `PATH` values; restart open DAWs before using Csound. Some hosts only scan `C:\Program Files\Common Files\VST3`; that location requires administrator permission and is not used by this script. The portable ZIP does not run an installer or change persistent Windows settings.

@@ -44,6 +44,10 @@ jobs:
         run: cargo xtask bundle rustel-vst3@0.1.14 --release --locked
       - name: Build the VST3 scan helper
         run: cargo build --package rustel-vst3@0.1.14 --bin rustel-vst-worker --release --locked
+      - name: Configure the MIDI VST3 host helper
+        run: cmake -S midi-host -B midi-host/build -A x64
+      - name: Build the MIDI VST3 host helper
+        run: cmake --build midi-host/build --config Release --parallel
       - name: Verify the scan helper does not open a console
         shell: pwsh
         run: |
@@ -58,6 +62,24 @@ jobs:
         run: |
           Copy-Item target/release/rustel-vst-worker.exe `
             target/bundled/RustelVstWorker.exe
+      - name: Place the MIDI host helper beside the plugin
+        shell: pwsh
+        run: |
+          $helper = Get-ChildItem midi-host/build -Filter "*.exe" -Recurse |
+            Where-Object {
+              $_.FullName -match "[\\/]MidiVst3CaptureHost_artefacts[\\/]Release[\\/]"
+            } |
+            Select-Object -First 1
+          if (!$helper) {
+            throw "The MIDI VST3 host helper executable was not built."
+          }
+          Copy-Item $helper.FullName target/bundled/RustelMidiHost.exe -Force
+          $bytes = [IO.File]::ReadAllBytes("target/bundled/RustelMidiHost.exe")
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+          if ($subsystem -ne 2) {
+            throw "The MIDI host helper must use the Windows GUI subsystem, not open a console."
+          }
       - name: Fetch the pinned upstream Rustel source
         shell: pwsh
         run: |
@@ -137,6 +159,7 @@ jobs:
           Copy-Item -Recurse target/bundled/Rustel.vst3 package/
           Copy-Item rustel-cli-source/target/release/rustel.exe package/
           Copy-Item target/bundled/RustelVstWorker.exe package/
+          Copy-Item target/bundled/RustelMidiHost.exe package/
           Copy-Item README.md, Rustel-Help.html, LICENSE, THIRD_PARTY_NOTICES.md, rustel-cli-revision.txt package/
           Copy-Item -Recurse licenses package/
           Copy-Item scripts/install-windows.ps1 package/
@@ -159,6 +182,9 @@ jobs:
           }
           if (!(Test-Path package/RustelVstWorker.exe)) {
             throw "The Rustel VST3 scan helper is missing."
+          }
+          if (!(Test-Path package/RustelMidiHost.exe)) {
+            throw "The Rustel MIDI VST3 host helper is missing."
           }
           if (!(Test-Path package/Rustel-CLI-Source.zip)) {
             throw "The Rustel CLI source archive is missing."
@@ -186,6 +212,7 @@ jobs:
             "Rustel.vst3/Contents/x86_64-win/Rustel.vst3",
             "rustel.exe",
             "RustelVstWorker.exe",
+            "RustelMidiHost.exe",
             "Scores/fm-electric-piano.orc",
             "Scores/fm-electric-piano.strudel",
             "Scores/fm-bass.orc",
@@ -213,6 +240,7 @@ jobs:
             -CsoundDestination "$env:RUNNER_TEMP/rustel-csound-test"
           if (!(Test-Path "$env:RUNNER_TEMP/rustel-vst3-test/Rustel.vst3/Contents/x86_64-win/Rustel.vst3") -or
               !(Test-Path "$env:RUNNER_TEMP/rustel-vst3-test/RustelVstWorker.exe") -or
+              !(Test-Path "$env:RUNNER_TEMP/rustel-vst3-test/RustelMidiHost.exe") -or
               !(Test-Path "$env:RUNNER_TEMP/rustel-csound-test/csound64.dll")) {
             throw "The bundled installer did not install the plugin and Csound runtime."
           }

@@ -2,6 +2,8 @@
 mod compiler;
 mod editor;
 mod engine;
+mod live_midi;
+mod midi_host;
 mod params;
 mod patch;
 mod portable_csound;
